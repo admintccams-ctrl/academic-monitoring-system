@@ -2928,7 +2928,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=180"></script>
+    <script src="portal-offline.js?v=181"></script>
     <script>
 
         const SUPABASE_URL =
@@ -9369,7 +9369,7 @@ async function renderAdminCreatedAccounts() {
                     removeButton.className = 'btn reject-btn';
                     removeButton.textContent = account.failed ? 'Remove failed request' : 'Remove request';
                     removeButton.title = 'Remove this queued teacher request from this device only';
-                    removeButton.addEventListener('click', () => removeQueuedAdminAccount(account.operationId, account.failed));
+                    removeButton.setAttribute('onclick', `removeQueuedAdminAccount('${account.operationId}', ${account.failed})`);
                     actionCell.appendChild(removeButton);
                 }
             } else if (account.operationId && account.failed && !account.queuedCreate) {
@@ -9378,7 +9378,7 @@ async function renderAdminCreatedAccounts() {
                 removeButton.className = 'btn reject-btn';
                 removeButton.textContent = 'Remove request';
                 removeButton.title = 'Remove this failed local account request only';
-                removeButton.addEventListener('click', () => removeFailedAdminAccountRequest(account.operationId));
+                removeButton.setAttribute('onclick', `removeFailedAdminAccountRequest('${account.operationId}')`);
                 actionCell.appendChild(removeButton);
             } else if (account.operationId) {
                 if (account.processing) {
@@ -9389,7 +9389,7 @@ async function renderAdminCreatedAccounts() {
                     removeButton.className = 'btn reject-btn';
                     removeButton.textContent = account.failed ? 'Remove failed request' : 'Remove request';
                     removeButton.title = 'Remove this queued request from this device only';
-                    removeButton.addEventListener('click', () => removeQueuedAdminAccount(account.operationId, account.failed));
+                    removeButton.setAttribute('onclick', `removeQueuedAdminAccount('${account.operationId}', ${account.failed})`);
                     actionCell.appendChild(removeButton);
                 }
             } else {

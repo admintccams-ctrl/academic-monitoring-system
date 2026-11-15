@@ -365,7 +365,7 @@
                 const isAllowedOfflineAction = control.matches('button')
                     && /createStudentAccount|createTeacherAccount|saveStudentEdits|saveTeacherEdits|resetStudentPassword|resetTeacherPassword|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminDeletionResults|loadUnassignedStudents|loadGraduatedStudents|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|unassignSelectedStudentsFromSection|assignSelectedUnassignedStudents|addDepartment|addMajor|addSection|addSubject|setActiveSemester|deleteDepartment|deleteMajor|deleteSectionModalAction|deleteSubject|assignTeacherToSubject|removeTeacherAssignment|saveTeacherSection|closeCreateStudentModal|closeEditStudentModal|closeTeacherAssignmentModal|closeModal|closeDepartmentModal|closeMajorModal|closeSectionModal|closeSubjectModal|closeDeleteDepartmentModal|closeDeleteMajorModal|closeDeleteSectionModal|closeDeleteSubjectModal|closeTeacherAssignModal|closeTeacherSectionModal|loadEditStudentMajors|loadEditStudentSections|loadDepartmentDeleteOptions|loadMajorsForDelete|loadMajorsForDeleteSection|loadSectionsForDelete|loadMajorsForDeleteSubject|loadSubjectsForDelete/.test(control.getAttribute('onclick') || '');
                 const isAllowedOfflineStandaloneAction = control.matches('button')
-                    && /deleteAllLogs|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|resetTeacherPassword|openEditTeacherModal|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminPasswordResetResults|clearAdminDeletionResults|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|openUnassignSelectedStudentsModal/.test(control.getAttribute('onclick') || '');
+                    && /removeQueuedAdminAccount|removeFailedAdminAccountRequest|deleteAllLogs|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|resetTeacherPassword|openEditTeacherModal|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminPasswordResetResults|clearAdminDeletionResults|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|openUnassignSelectedStudentsModal/.test(control.getAttribute('onclick') || '');
                 const isSemesterPicker = control.id === 'activeSemesterSelect';
                 const isExplorerBack = control.id === 'backButton';
                 const isStudentFilter = ['manageStudentYear', 'manageStudentDepartment', 'manageStudentMajor', 'manageStudentSection'].includes(control.id);
@@ -2675,7 +2675,10 @@
                     const isOfflineSupportedAction = window.currentOfflineRole === 'teacher'
                         && attribute.name.toLowerCase() === 'onclick'
                         && /openRequirementModal|saveRequirement|deleteRequirement|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor/.test(handler);
-                    if (isLogout || isOfflineSupportedAction) return;
+                    const isOfflineAdminRequestRemoval = window.currentOfflineRole === 'admin'
+                        && attribute.name.toLowerCase() === 'onclick'
+                        && /^(removeQueuedAdminAccount|removeFailedAdminAccountRequest)\(/.test(handler);
+                    if (isLogout || isOfflineSupportedAction || isOfflineAdminRequestRemoval) return;
                     element.removeAttribute(attribute.name);
                 }
             });
