@@ -1258,6 +1258,22 @@
         return true;
     }
 
+    async function discardAdminStructureOperation(client, operationId) {
+        const userId = await getUserId(client);
+        if (!userId) throw new Error('Sign in again before canceling an academic change.');
+        if (window.adminStructureSyncInProgress) {
+            throw new Error('An academic change is syncing now. Wait for sync to finish before canceling it.');
+        }
+        const { pending } = await getAdminStructureData(client);
+        const operation = pending.find(item => item.operationId === operationId);
+        if (!operation || operation.userId !== userId) {
+            throw new Error('This pending academic change was not found on this device.');
+        }
+        await adminStoreRequest(adminStructureQueueStoreName, 'readwrite', store => store.delete(operation.key));
+        window.dispatchEvent(new CustomEvent('admin-structure-data-changed'));
+        return true;
+    }
+
     async function clearAdminPasswordResetResults(client) {
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in again before clearing saved reset results.');
@@ -1270,6 +1286,9 @@
     async function discardQueuedAdminAccountOperation(client, operationId) {
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in again before managing saved offline operations.');
+        if (window.adminAccountSyncInProgress || window.adminHistoryClearInProgress) {
+            throw new Error('Admin changes are syncing or being cleared. Wait for that process to finish before canceling this change.');
+        }
         const key = `${userId}:${operationId}`;
         const item = await adminStoreRequest(adminQueueStoreName, 'readonly', store => store.get(key));
         if (!item || item.userId !== userId) throw new Error('This saved operation was not found.');
@@ -1881,6 +1900,7 @@
         window.updateQueuedAdminStudentCreation = updateQueuedAdminStudentCreation;
     window.queueAdminStructureOperation = queueAdminStructureOperation;
     window.queueAdminStructureDelete = queueAdminStructureDelete;
+    window.discardAdminStructureOperation = discardAdminStructureOperation;
     window.cacheSystemLogEntries = cacheSystemLogEntries;
     window.getCachedSystemLogs = getCachedSystemLogs;
     window.queueSystemLogDeleteAll = queueSystemLogDeleteAll;

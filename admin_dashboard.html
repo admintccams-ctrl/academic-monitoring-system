@@ -1274,8 +1274,8 @@ table td{
                 </div>
                 <div class="table-responsive" style="max-height:720px;overflow:auto;">
                     <table>
-                        <thead><tr><th style="position:sticky;top:0;background:#fff;z-index:1;">Change</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Details</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Status</th></tr></thead>
-                        <tbody id="adminStructureQueueTable"><tr><td colspan="3">No pending changes</td></tr></tbody>
+                        <thead><tr><th style="position:sticky;top:0;background:#fff;z-index:1;">Change</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Details</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Action</th></tr></thead>
+                        <tbody id="adminStructureQueueTable"><tr><td colspan="4">No pending changes</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -4694,16 +4694,26 @@ async function transitionAdminSection(encodedSectionId, direction) {
 }
 
 async function refreshManageStudentsAfterSectionTransition(sectionId, yearLevel) {
-    const departmentId = document.getElementById('manageStudentDepartment').value;
-    const majorId = document.getElementById('manageStudentMajor').value;
+    const structure = await window.getAdminStructureData(supabaseClient);
+    const pending = structure?.pending || [];
+    const lookups = structure?.lookups || {};
+    const sectionKey = String(sectionId);
+    const resolvedSectionId = await resolveAdminStructureLocalId(sectionKey);
+    const section = (lookups.sections || []).find(item =>
+        [sectionKey, resolvedSectionId].includes(String(item.section_id)))
+        || pending.find(item => item.type === 'section_add' && String(item.localRef) === sectionKey)?.payload;
+    const majorId = String(section?.major_id || document.getElementById('manageStudentMajor').value || '');
+    const major = (lookups.majors || []).find(item => String(item.major_id) === majorId)
+        || pending.find(item => item.type === 'major_add' && String(item.localRef) === majorId)?.payload;
+    const departmentId = String(major?.department_id || document.getElementById('manageStudentDepartment').value || '');
     document.getElementById('manageStudentYear').value = yearLevel;
     await loadDepartmentsForManageStudents();
-    document.getElementById('manageStudentDepartment').value = departmentId;
+    document.getElementById('manageStudentDepartment').value = await resolveAdminStructureLocalId(departmentId);
     await loadMajorsForManageStudents();
-    document.getElementById('manageStudentMajor').value = majorId;
+    document.getElementById('manageStudentMajor').value = await resolveAdminStructureLocalId(majorId);
     await loadSectionsForManageStudents();
     const sectionSelect = document.getElementById('manageStudentSection');
-    sectionSelect.value = String(sectionId);
+    sectionSelect.value = resolvedSectionId;
     await loadStudentsBySection();
     await renderAdminCreatedAccounts();
 }
@@ -8212,6 +8222,13 @@ async function loadUnassignedStudentChoices() {
         return;
     }
 
+    const accountData = await window.getAdminAccountData(supabaseClient);
+    const queuedBulkScopes = new Set(accountData.queued
+        .filter(item => item.action === 'admin-bulk-delete')
+        .map(item => item.payload.scope));
+    const structure = await window.getAdminStructureData(supabaseClient);
+    const deletedSections = getQueuedDeletedSectionIds(structure.pending, structure.lookups);
+
     let students;
     if (!navigator.onLine) {
         const roster = await window.getAdminStudentRoster?.(supabaseClient);
@@ -8228,17 +8245,15 @@ async function loadUnassignedStudentChoices() {
         students = data || [];
     }
 
-    const accountData = await window.getAdminAccountData(supabaseClient);
     const queuedEdits = accountData.queued.filter(item => item.action === 'admin-edit' && item.role === 'student');
     const editByStudent = new Map(queuedEdits.map(item => [String(item.payload.student_id), item.payload]));
     students = students.map(student => editByStudent.has(String(student.student_id))
         ? { ...student, ...editByStudent.get(String(student.student_id)), section_id: editByStudent.get(String(student.student_id)).section_id || null }
         : student)
         .filter(student => !student.section_id);
+    if (queuedBulkScopes.has('unassigned')) students = [];
 
-    const structure = await window.getAdminStructureData(supabaseClient);
-    const deletedSections = getQueuedDeletedSectionIds(structure.pending, structure.lookups);
-    if (!navigator.onLine) {
+    if (!navigator.onLine && !queuedBulkScopes.has('unassigned')) {
         const roster = await window.getAdminStudentRoster?.(supabaseClient);
         if (roster?.students) {
             roster.students.forEach(original => {
@@ -8275,8 +8290,7 @@ async function loadUnassignedStudentChoices() {
         students = students.filter(student => !pendingAssignments.has(String(student.student_id))
             && !pendingAssignmentNumbers.has(String(student.student_number)));
     }
-    const queuedAccountData = await window.getAdminAccountData(supabaseClient);
-    queuedAccountData.queued.filter(item => item.role === 'student'
+    accountData.queued.filter(item => !queuedBulkScopes.has('unassigned') && item.role === 'student'
         && (item.action || 'admin-create') === 'admin-create')
         .forEach(item => {
             let projectedSectionId = item.payload.section_id ? String(item.payload.section_id) : null;
@@ -9519,7 +9533,7 @@ async function renderAdminDeletions() {
     if (!rows.length) {
         const row = table.insertRow();
         const cell = row.insertCell();
-        cell.colSpan = 3;
+        cell.colSpan = 4;
         cell.textContent = 'No deletion history on this device';
         return;
     }
@@ -10103,7 +10117,47 @@ async function renderAdminStructureQueue() {
                 cell.textContent = value;
                 row.appendChild(cell);
             });
+        const actionCell = document.createElement('td');
+        const isStructureOperation = structurePending.some(operation => operation.operationId === item.operationId);
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.className = 'btn reject-btn';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.title = item.lastError
+            ? 'Cancel this failed change so it will not retry.'
+            : 'Cancel this saved change so it will not sync.';
+        cancelButton.disabled = Boolean(item.processing)
+            || (isStructureOperation && Boolean(window.adminStructureSyncInProgress))
+            || (!isStructureOperation && Boolean(window.adminAccountSyncInProgress));
+        cancelButton.addEventListener('click', () => cancelAdminPendingChange(item, isStructureOperation));
+        actionCell.appendChild(cancelButton);
+        row.appendChild(actionCell);
         table.appendChild(row);
+    });
+}
+
+function cancelAdminPendingChange(item, isStructureOperation) {
+    const changeName = item.lastError ? 'failed pending change' : 'pending change';
+    showConfirmModal('Cancel Pending Change', `Cancel this ${changeName}? It will be removed from this device and will not sync.`, async () => {
+        try {
+            if (item.processing || (isStructureOperation && window.adminStructureSyncInProgress)) {
+                throw new Error('This change is syncing now. Wait for sync to finish before canceling it.');
+            }
+            if (isStructureOperation) {
+                await window.discardAdminStructureOperation(supabaseClient, item.operationId);
+            } else {
+                await window.discardQueuedAdminAccountOperation(supabaseClient, item.operationId);
+            }
+            closeConfirmModal();
+            await renderAdminStructureQueue();
+            await renderAdminCreatedAccounts();
+            await renderAdminDeletions();
+            await renderAdminPasswordResets();
+            showAlert('success', 'Pending Change Canceled', 'The saved change was removed from this device and will not sync.');
+        } catch (error) {
+            closeConfirmModal();
+            showAlert('error', 'Could Not Cancel Change', error.message || 'The saved change remains on this device.');
+        }
     });
 }
 
