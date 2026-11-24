@@ -404,6 +404,57 @@
         return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
     }
 
+    async function createAdminBulkAccountBatch(client, role, accountIds) {
+        const userId = await getUserId(client);
+        if (!userId) throw new Error('Sign in before creating a bulk account batch.');
+        if (!['student', 'teacher'].includes(role)) throw new Error('Choose a valid account type.');
+        if (!Array.isArray(accountIds) || !accountIds.length) throw new Error('Enter at least one account ID.');
+
+        const batchId = createOperationId();
+        const batch = {
+            key: `${userId}:${batchId}`,
+            userId,
+            batchId,
+            role,
+            createdAt: new Date().toISOString(),
+            accounts: accountIds.map(accountId => ({
+                accountId: String(accountId),
+                operationId: createOperationId(),
+                status: 'not-started',
+                error: ''
+            }))
+        };
+        batch.recordType = 'bulk-batch';
+        await adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.put(batch));
+        return batch;
+    }
+
+    async function updateAdminBulkAccountBatchEntry(userId, batchId, operationId, status, error = '') {
+        if (!batchId) return;
+        const key = `${userId}:${batchId}`;
+        const batch = await adminStoreRequest(adminResultsStoreName, 'readonly', store => store.get(key));
+        if (!batch || batch.userId !== userId) return;
+        const account = batch.accounts.find(item => item.operationId === operationId);
+        if (!account) return;
+        account.status = status;
+        account.error = error;
+        await adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.put(batch));
+    }
+
+    async function updateAdminBulkAccountBatch(client, batchId, operationId, status, error = '') {
+        const userId = await getUserId(client);
+        if (!userId) throw new Error('Sign in again before updating the bulk account batch.');
+        await updateAdminBulkAccountBatchEntry(userId, batchId, operationId, status, error);
+    }
+
+    async function getAdminBulkAccountBatches(client) {
+        const userId = await getUserId(client);
+        if (!userId) return [];
+        const batches = await adminStoreRequest(adminResultsStoreName, 'readonly', store => store.getAll());
+        return batches.filter(batch => batch.userId === userId && batch.recordType === 'bulk-batch')
+            .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
+    }
+
     async function queueTeacherOperation(client, type, payload, file = null) {
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in while online before making offline changes.');
@@ -582,11 +633,12 @@
         return new Date(Math.max(Date.now(), latestTimestamp + 1)).toISOString();
     }
 
-    async function saveAdminAccountResult(userId, operationId, role, payload, result) {
+    async function saveAdminAccountResult(userId, operationId, role, payload, result, options = {}) {
         const lookups = role === 'student' ? await getAdminAccountLookups(null, userId) : null;
         const section = lookups?.sections.find(item => String(item.section_id) === String(payload.section_id || result.section_id));
         await adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.put({
             key: `${userId}:${operationId}`, userId, operationId, role,
+            bulkBatchId: options.bulkBatchId || null,
             accountId: role === 'student' ? result.login_id : result.teacher_number,
             temporaryPassword: result.temporary_password,
             createdAt: new Date().toISOString(),
@@ -602,22 +654,26 @@
                 section_name: section?.section_name || ''
             }
         }));
-        window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
-        if (typeof window.renderAdminCreatedAccounts === 'function') {
-            await window.renderAdminCreatedAccounts();
+        await updateAdminBulkAccountBatchEntry(userId, options.bulkBatchId, operationId, 'created');
+        if (!options.suppressEvents) {
+            window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
+            if (typeof window.renderAdminCreatedAccounts === 'function') {
+                await window.renderAdminCreatedAccounts();
+            }
         }
     }
 
-    async function recordAdminAccountCreationFailure(client, role, payload, errorMessage) {
+    async function recordAdminAccountCreationFailure(client, role, payload, errorMessage, options = {}) {
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in again before saving this account request.');
-        const operationId = createOperationId();
+        const operationId = options.operationId || createOperationId();
         const accountId = role === 'teacher' ? payload.teacher_number : payload.student_number;
         const record = {
             key: `${userId}:${operationId}`,
             userId,
             operationId,
             role,
+            bulkBatchId: options.bulkBatchId || null,
             accountId: String(accountId || ''),
             createdAt: new Date().toISOString(),
             status: `Needs attention: ${errorMessage || 'Account creation failed.'}`,
@@ -625,7 +681,8 @@
             payload: { ...payload }
         };
         await adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.put(record));
-        window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
+        await updateAdminBulkAccountBatchEntry(userId, options.bulkBatchId, operationId, 'failed', String(errorMessage || 'Account creation failed.'));
+        if (!options.suppressEvents) window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
         return operationId;
     }
 
@@ -646,8 +703,12 @@
         const userId = await getUserId(client);
         if (!userId || !accountNumber) return;
         const allResults = await adminStoreRequest(adminResultsStoreName, 'readonly', store => store.getAll());
-        await Promise.all(allResults.filter(item => item.userId === userId && item.role === role
-            && String(item.accountId) === String(accountNumber)).map(item => adminStoreRequest(
+        const matchingResults = allResults.filter(item => item.userId === userId && item.role === role
+            && String(item.accountId) === String(accountNumber));
+        await Promise.all(matchingResults.filter(item => item.bulkBatchId && !item.failed && item.temporaryPassword).map(item =>
+            updateAdminBulkAccountBatchEntry(userId, item.bulkBatchId, item.operationId, 'account-removed',
+                'The account was deleted; its saved temporary password is no longer available.')));
+        await Promise.all(matchingResults.map(item => adminStoreRequest(
             adminResultsStoreName, 'readwrite', store => store.delete(item.key)
         )));
     }
@@ -1411,18 +1472,20 @@
         }
     }
 
-    async function submitAdminAccountCreation(client, role, payload, functionUrl, anonKey) {
+    async function submitAdminAccountCreation(client, role, payload, functionUrl, anonKey, options = {}) {
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in while connected before creating an account offline.');
-        const operationId = createOperationId();
+        const operationId = options.operationId || createOperationId();
         if (!navigator.onLine) {
             const createdAt = await nextAdminQueueTimestamp(userId);
             await adminStoreRequest(adminQueueStoreName, 'readwrite', store => store.put({
                 key: `${userId}:${operationId}`, userId, operationId, role, payload,
+                bulkBatchId: options.bulkBatchId || null,
                 functionUrl, anonKey, createdAt, lastError: null
             }));
+            await updateAdminBulkAccountBatchEntry(userId, options.bulkBatchId, operationId, 'queued');
             setNotice(`${role === 'student' ? 'Student' : 'Teacher'} account saved on this device. It will be created when you are online.`, true, 'sync');
-            window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
+            if (!options.suppressEvents) window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
             return { queued: true, operationId };
         }
 
@@ -1435,7 +1498,7 @@
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Account creation failed.');
-        await saveAdminAccountResult(userId, operationId, role, payload, result);
+        await saveAdminAccountResult(userId, operationId, role, payload, result, options);
         if (role === 'teacher') await refreshAdminTeacherLookups(client, userId);
         return result;
     }
@@ -1617,7 +1680,8 @@
         ]);
         return {
                 queued: allQueued.filter(item => item.userId === userId).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)),
-            completed: allCompleted.filter(item => item.userId === userId).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+            completed: allCompleted.filter(item => item.userId === userId && item.recordType !== 'bulk-batch')
+                .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
             passwordResets: allPasswordResets.filter(item => item.userId === userId).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         };
     }
@@ -1628,6 +1692,15 @@
         const key = `${userId}:${operationId}`;
         const queuedItem = await adminStoreRequest(adminQueueStoreName, 'readonly', store => store.get(key));
         if (!queuedItem || queuedItem.userId !== userId) throw new Error('This saved account request was not found.');
+        if (queuedItem.bulkBatchId) {
+            await updateAdminBulkAccountBatchEntry(
+                userId,
+                queuedItem.bulkBatchId,
+                operationId,
+                'failed',
+                queuedItem.lastError || 'Request removed before account creation.'
+            );
+        }
         const accountNumber = String(queuedItem.role === 'teacher'
             ? queuedItem.payload?.teacher_number || ''
             : queuedItem.payload?.student_number || '');
@@ -1667,12 +1740,23 @@
     async function clearAdminAccountResults(client) {
         const userId = await getUserId(client);
         if (!userId) return;
-        const allResults = await adminStoreRequest(adminResultsStoreName, 'readonly', store => store.getAll());
-        const allResetResults = await adminStoreRequest(adminPasswordResetResultsStoreName, 'readonly', store => store.getAll());
-        await Promise.all(allResults.filter(item => item.userId === userId).map(item =>
+        const [allResults, allResetResults, allQueued] = await Promise.all([
+            adminStoreRequest(adminResultsStoreName, 'readonly', store => store.getAll()),
+            adminStoreRequest(adminPasswordResetResultsStoreName, 'readonly', store => store.getAll()),
+            adminStoreRequest(adminQueueStoreName, 'readonly', store => store.getAll())
+        ]);
+        const userBatches = allResults.filter(item => item.userId === userId && item.recordType === 'bulk-batch');
+        const userAccountResults = allResults.filter(item => item.userId === userId && item.recordType !== 'bulk-batch');
+        await Promise.all(userAccountResults.filter(item => item.bulkBatchId && !item.failed && item.temporaryPassword).map(item =>
+            updateAdminBulkAccountBatchEntry(userId, item.bulkBatchId, item.operationId, 'credentials-cleared',
+                'Saved temporary credentials were cleared from this device.')));
+        await Promise.all(userAccountResults.map(item =>
             adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.delete(item.key))));
         await Promise.all(allResetResults.filter(item => item.userId === userId).map(item =>
             adminStoreRequest(adminPasswordResetResultsStoreName, 'readwrite', store => store.delete(item.key))));
+        await Promise.all(userBatches.filter(batch =>
+            !allQueued.some(item => item.userId === userId && item.bulkBatchId === batch.batchId)).map(batch =>
+            adminStoreRequest(adminResultsStoreName, 'readwrite', store => store.delete(batch.key))));
         window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
         window.dispatchEvent(new CustomEvent('admin-password-reset-data-changed'));
     }
@@ -1745,7 +1829,9 @@
                         if (!response.ok) throw new Error(result.error || 'Account creation failed.');
                     }
                     if ((item.action || 'admin-create') === 'admin-create') {
-                        await saveAdminAccountResult(userId, item.operationId, item.role, payload, result);
+                        await saveAdminAccountResult(userId, item.operationId, item.role, payload, result, {
+                            bulkBatchId: item.bulkBatchId
+                        });
                         if (item.role === 'teacher') {
                             await refreshAdminTeacherLookups(client, userId);
                             if (result.teacher_id) {
@@ -1790,6 +1876,15 @@
                     const failureReason = error?.message || 'Account creation is waiting to retry.';
                     const stillProcessing = failureReason.includes('Account creation is still processing.')
                         || failureReason.includes('Password reset is still processing.');
+                    if ((item.action || 'admin-create') === 'admin-create' && item.bulkBatchId) {
+                        await updateAdminBulkAccountBatchEntry(
+                            userId,
+                            item.bulkBatchId,
+                            item.operationId,
+                            stillProcessing ? 'queued' : 'attention',
+                            failureReason
+                        );
+                    }
                     await adminStoreRequest(adminQueueStoreName, 'readwrite', store => store.put({
                         ...item,
                         processing: stillProcessing,
@@ -1873,6 +1968,9 @@
 
     window.submitAdminAccountCreation = submitAdminAccountCreation;
     window.recordAdminAccountCreationFailure = recordAdminAccountCreationFailure;
+    window.createAdminBulkAccountBatch = createAdminBulkAccountBatch;
+    window.updateAdminBulkAccountBatch = updateAdminBulkAccountBatch;
+    window.getAdminBulkAccountBatches = getAdminBulkAccountBatches;
     window.discardAdminAccountResult = discardAdminAccountResult;
     window.submitAdminAccountDeletion = submitAdminAccountDeletion;
     window.submitAdminTeacherOperation = submitAdminTeacherOperation;

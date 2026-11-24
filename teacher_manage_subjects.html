@@ -1184,7 +1184,7 @@ Select Subject and Section
                             : "";
 
                     html += `
-                        <tr data-student-id="${student.student_id}">
+                        <tr data-student-id="${student.student_id}" data-student-gender="${student.gender || ''}">
                             <td>${formatPersonTableName(student)}</td>
                             <td>${requirementList}</td>
                             <td>
@@ -1715,6 +1715,7 @@ Select Subject and Section
                             return {
                                 student_id: Number(row.dataset.studentId || buttonStudentId),
                                 student_number: 'N/A',
+                                gender: row.dataset.studentGender || '',
                                 display_name: row.cells[0]?.textContent.trim() || 'Student'
                             };
                         })
@@ -1733,29 +1734,55 @@ Select Subject and Section
                 const students = isSingleStudent
                     ? currentRequirementStudents.filter(student => String(student.student_id) === String(studentId))
                     : currentRequirementStudents;
-                students.forEach(student => {
-                    const row = document.createElement('tr');
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.className = 'requirement-student-check';
-                    checkbox.value = student.student_id;
-                    checkbox.checked = isSingleStudent;
-                    checkbox.addEventListener('change', updateRequirementStudentCount);
+                const genderGroups = isSingleStudent
+                    ? [['', students]]
+                    : [
+                        ['Male', students.filter(student => student.gender === 'Male')],
+                        ['Female', students.filter(student => student.gender === 'Female')],
+                        ['Gender Not Set', students.filter(student => !['Male', 'Female'].includes(student.gender))]
+                    ];
+                genderGroups.forEach(([gender, group]) => {
+                    if (gender) {
+                        const heading = document.createElement('tr');
+                        heading.className = 'student-gender-heading';
+                        const cell = document.createElement('td');
+                        cell.colSpan = 3;
+                        const label = document.createElement('strong');
+                        label.textContent = gender;
+                        cell.appendChild(label);
+                        heading.appendChild(cell);
+                        list.appendChild(heading);
+                    }
+                    [...group].sort((first, second) =>
+                        `${first.last_name || ''}, ${first.first_name || ''}`.localeCompare(
+                            `${second.last_name || ''}, ${second.first_name || ''}`,
+                            undefined,
+                            { sensitivity: 'base' }
+                        )
+                    ).forEach(student => {
+                        const row = document.createElement('tr');
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'requirement-student-check';
+                        checkbox.value = student.student_id;
+                        checkbox.checked = isSingleStudent;
+                        checkbox.addEventListener('change', updateRequirementStudentCount);
 
-                    const checkboxCell = document.createElement('td');
-                    checkboxCell.style.textAlign = 'center';
-                    checkboxCell.appendChild(checkbox);
+                        const checkboxCell = document.createElement('td');
+                        checkboxCell.style.textAlign = 'center';
+                        checkboxCell.appendChild(checkbox);
 
-                    const idCell = document.createElement('td');
-                    idCell.textContent = student.student_number || 'N/A';
+                        const idCell = document.createElement('td');
+                        idCell.textContent = student.student_number || 'N/A';
 
-                    const nameCell = document.createElement('td');
-                    const name = document.createElement('span');
-                    name.textContent = formatPersonTableName(student);
-                    nameCell.appendChild(name);
+                        const nameCell = document.createElement('td');
+                        const name = document.createElement('span');
+                        name.textContent = formatPersonTableName(student);
+                        nameCell.appendChild(name);
 
-                    row.append(checkboxCell, idCell, nameCell);
-                    list.appendChild(row);
+                        row.append(checkboxCell, idCell, nameCell);
+                        list.appendChild(row);
+                    });
                 });
 
                 document.getElementById('requirementModal').style.display = 'flex';

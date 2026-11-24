@@ -1253,7 +1253,10 @@ table td{
                         <h2>Accounts Created on This Device</h2>
                         <p>Queued account requests and temporary credentials returned after creation</p>
                     </div>
-                    <button class="btn reject-btn" onclick="clearAdminCreatedAccounts()">Clear saved credentials</button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn" type="button" onclick="openBulkAccountCreateModal()">Bulk Create Accounts</button>
+                        <button class="btn reject-btn" onclick="clearAdminCreatedAccounts()">Clear saved credentials</button>
+                    </div>
                 </div>
                 <div class="dashboard-search-field">
                     <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
@@ -1264,6 +1267,16 @@ table td{
                         <thead><tr><th style="position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Name</th><th style="position:sticky;top:0;background:#fff;z-index:1;">ID</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Year</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Section</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Temporary Password</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Action</th></tr></thead>
                         <tbody id="adminCreatedAccountsTable"><tr><td colspan="8">No account requests yet</td></tr></tbody>
                     </table>
+                </div>
+                <div style="margin-top:22px;">
+                    <h3>Bulk Account Creation Downloads</h3>
+                    <p>Downloads become available after every account in that batch has synced or been marked failed.</p>
+                    <div class="table-responsive">
+                        <table>
+                            <thead><tr><th>Account Type</th><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
+                            <tbody id="adminBulkAccountBatchesTable"><tr><td colspan="5">No bulk account batches yet</td></tr></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
@@ -2494,6 +2507,29 @@ onchange="loadSubjectsForTeacherAssign()">
     </div>
 </div>
 
+<div class="modal" id="bulkAccountCreateModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Bulk Create Accounts</h3>
+            <button class="close-btn" type="button" onclick="closeModal('bulkAccountCreateModal')">X</button>
+        </div>
+        <div class="modal-body">
+            <p>Create student or teacher accounts using IDs only. Their names and other profile details are completed at first login.</p>
+            <label for="bulkAccountRole">Account type</label>
+            <select id="bulkAccountRole" style="width:100%;margin:8px 0 14px;padding:12px;border:1px solid #dbe4f0;border-radius:8px;">
+                <option value="student">Student</option>
+                <option value="teacher">Teacher</option>
+            </select>
+            <label for="bulkAccountIds">Account IDs</label>
+            <textarea id="bulkAccountIds" rows="8" placeholder="Enter one ID per line, or separate IDs with commas" style="width:100%;margin:8px 0;padding:12px;border:1px solid #dbe4f0;border-radius:8px;resize:vertical;"></textarea>
+            <p>Offline batches are saved on this device. Temporary passwords will be available in a CSV download after sync. Duplicate IDs in this list are ignored.</p>
+            <p id="bulkAccountCreateProgress" role="status" aria-live="polite"></p>
+            <p id="bulkAccountCreateError" class="danger-text" role="alert"></p>
+            <button id="bulkAccountCreateButton" class="btn" type="button" onclick="createBulkAdminAccounts()">Create Accounts</button>
+        </div>
+    </div>
+</div>
+
 <div class="modal" id="editTeacherModal">
     <div class="modal-content">
         <div class="modal-header">
@@ -2915,7 +2951,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=188"></script>
+    <script src="portal-offline.js?v=189"></script>
     <script>
 
         const SUPABASE_URL =
@@ -9123,6 +9159,67 @@ async function callStudentAccountFunction(action, payload) {
     return result;
 }
 
+function renderAdminBulkAccountBatches(accountData, batches) {
+    const table = document.getElementById('adminBulkAccountBatchesTable');
+    if (!table) return;
+    table.replaceChildren();
+    if (!batches?.length) {
+        const row = table.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = 5;
+        cell.textContent = 'No bulk account batches yet';
+        return;
+    }
+
+    const queued = accountData?.queued || [];
+    const completed = accountData?.completed || [];
+    batches.forEach(batch => {
+        const states = batch.accounts.map(account => {
+            const queuedItem = queued.find(item => item.operationId === account.operationId);
+            if (queuedItem) return queuedItem.lastError ? 'attention' : 'queued';
+            const result = completed.find(item => item.operationId === account.operationId);
+            if (result) return result.failed ? 'failed' : 'created';
+            return account.status || 'not-started';
+        });
+        const createdCount = states.filter(state => ['created', 'credentials-cleared', 'account-removed'].includes(state)).length;
+        const failedCount = states.filter(state => state === 'failed').length;
+        const clearedCount = states.filter(state => state === 'credentials-cleared').length;
+        const removedCount = states.filter(state => state === 'account-removed').length;
+        const queuedCount = states.filter(state => state === 'queued').length;
+        const attentionCount = states.filter(state => state === 'attention').length;
+        const resumableCount = states.filter(state => ['not-started', 'submitting'].includes(state)).length;
+        const ready = states.every(state => ['created', 'failed', 'credentials-cleared', 'account-removed'].includes(state));
+        const status = ready
+            ? `${createdCount} created, ${failedCount} failed${clearedCount ? `, ${clearedCount} password(s) cleared` : ''}${removedCount ? `, ${removedCount} deleted` : ''}`
+            : attentionCount
+                ? `${attentionCount} need attention; resolve or remove the queued requests`
+                : queuedCount
+                    ? `${queuedCount} waiting for sync`
+                    : `${resumableCount} need to be resumed`;
+        const row = table.insertRow();
+        [batch.role === 'student' ? 'Student' : 'Teacher',
+            String(batch.accounts.length),
+            new Date(batch.createdAt).toLocaleString(),
+            status]
+            .forEach(value => row.insertCell().textContent = value);
+        const actionCell = row.insertCell();
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn';
+        if (ready) {
+            button.textContent = 'Download CSV';
+            button.addEventListener('click', () => downloadAdminBulkAccountBatch(batch.batchId));
+        } else if (resumableCount && !queuedCount && !attentionCount) {
+            button.textContent = 'Resume';
+            button.addEventListener('click', () => resumeAdminBulkAccountBatch(batch.batchId));
+        } else {
+            button.textContent = 'Waiting for sync';
+            button.disabled = true;
+        }
+        actionCell.appendChild(button);
+    });
+}
+
 async function renderAdminCreatedAccounts() {
     const table = document.getElementById('adminCreatedAccountsTable');
     if (!table || !window.getAdminAccountData) return;
@@ -9135,13 +9232,16 @@ async function renderAdminCreatedAccounts() {
                 return fallback;
             }
         };
-        const [{ queued, completed }, lookups, structureData, structureIdMap, roster] = await Promise.all([
+        const [accountData, bulkBatches, lookups, structureData, structureIdMap, roster] = await Promise.all([
             window.getAdminAccountData(supabaseClient),
+            window.getAdminBulkAccountBatches(supabaseClient),
             loadOptionalData('saved account lookups', () => window.getAdminAccountLookups?.(supabaseClient), null),
             loadOptionalData('pending academic changes', () => window.getAdminStructureData?.(supabaseClient), { pending: [] }),
             loadOptionalData('local academic ID mappings', () => window.getAdminStructureLocalIdMap?.(supabaseClient), new Map()),
             loadOptionalData('saved student roster', () => window.getAdminStudentRoster?.(supabaseClient), null)
         ]);
+        const { queued = [], completed = [] } = accountData || {};
+        renderAdminBulkAccountBatches(accountData, bulkBatches);
         const structurePending = structureData?.pending || [];
         const cachedStudents = new Map((roster?.students || []).map(student => [String(student.student_number), student]));
         const cachedTeachers = new Map((lookups?.teachers || []).map(teacher => [String(teacher.teacher_number), teacher]));
@@ -9452,10 +9552,204 @@ async function renderAdminCreatedAccounts() {
         const cell = row.insertCell();
         cell.colSpan = 8;
         cell.textContent = `Unable to load account history: ${error?.message || 'Please try again.'}`;
+        const batchTable = document.getElementById('adminBulkAccountBatchesTable');
+        if (batchTable) {
+            batchTable.replaceChildren();
+            const batchRow = batchTable.insertRow();
+            const batchCell = batchRow.insertCell();
+            batchCell.colSpan = 5;
+            batchCell.textContent = `Unable to load bulk batches: ${error?.message || 'Please try again.'}`;
+        }
     }
 }
 
 window.renderAdminCreatedAccounts = renderAdminCreatedAccounts;
+
+function openBulkAccountCreateModal() {
+    document.getElementById('bulkAccountIds').value = '';
+    document.getElementById('bulkAccountCreateProgress').textContent = '';
+    document.getElementById('bulkAccountCreateError').textContent = '';
+    document.getElementById('bulkAccountCreateButton').disabled = false;
+    document.getElementById('bulkAccountCreateButton').textContent = 'Create Accounts';
+    openModal('bulkAccountCreateModal');
+}
+
+async function processAdminBulkAccountBatch(batch, accounts) {
+    const functionUrl = batch.role === 'student' ? STUDENT_ACCOUNT_FUNCTION_URL : TEACHER_ACCOUNT_FUNCTION_URL;
+    const accountField = batch.role === 'student' ? 'student_number' : 'teacher_number';
+    const progress = document.getElementById('bulkAccountCreateProgress');
+
+    for (let index = 0; index < accounts.length; index += 1) {
+        const account = accounts[index];
+        await window.updateAdminBulkAccountBatch(
+            supabaseClient, batch.batchId, account.operationId, 'submitting'
+        );
+        if (progress) progress.textContent = `Processing ${index + 1} of ${accounts.length}: ${account.accountId}`;
+        const payload = { [accountField]: account.accountId };
+        const options = {
+            bulkBatchId: batch.batchId,
+            operationId: account.operationId,
+            suppressEvents: true
+        };
+        try {
+            await window.submitAdminAccountCreation(
+                supabaseClient, batch.role, payload, functionUrl, SUPABASE_ANON_KEY, options
+            );
+        } catch (error) {
+            const accountData = await window.getAdminAccountData(supabaseClient);
+            const savedResult = accountData.completed.find(item => item.operationId === account.operationId);
+            if (savedResult && !savedResult.failed) continue;
+            if (!navigator.onLine) {
+                try {
+                    await window.submitAdminAccountCreation(
+                        supabaseClient, batch.role, payload, functionUrl, SUPABASE_ANON_KEY, options
+                    );
+                    continue;
+                } catch (queueError) {
+                    await window.updateAdminBulkAccountBatch(
+                        supabaseClient, batch.batchId, account.operationId, 'not-started',
+                        queueError.message || error.message || 'Unable to save this request on the device.'
+                    );
+                    continue;
+                }
+            }
+            await window.recordAdminAccountCreationFailure(
+                supabaseClient, batch.role, payload, error.message || 'Account creation failed.', options
+            );
+        }
+    }
+
+    window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
+    await renderAdminCreatedAccounts();
+    if (batch.role === 'teacher'
+        && document.getElementById('teacherSection')?.classList.contains('active-section')) {
+        await loadTeachersManagement();
+    }
+}
+
+async function createBulkAdminAccounts() {
+    const role = document.getElementById('bulkAccountRole').value;
+    const ids = document.getElementById('bulkAccountIds').value
+        .split(/[\s,;]+/)
+        .map(value => value.trim())
+        .filter(Boolean);
+    const uniqueIds = [...new Map(ids.map(id => [id.toLowerCase(), id])).values()];
+    const errorBox = document.getElementById('bulkAccountCreateError');
+    const progress = document.getElementById('bulkAccountCreateProgress');
+    const button = document.getElementById('bulkAccountCreateButton');
+    errorBox.textContent = '';
+    progress.textContent = '';
+
+    if (!uniqueIds.length) {
+        errorBox.textContent = 'Enter at least one account ID.';
+        return;
+    }
+    const invalidIds = uniqueIds.filter(id => !/^[A-Za-z0-9-]{1,40}$/.test(id));
+    if (invalidIds.length) {
+        errorBox.textContent = `Invalid IDs: ${invalidIds.slice(0, 5).join(', ')}${invalidIds.length > 5 ? ', ...' : ''}. Use 1–40 letters, numbers, or hyphens.`;
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Starting...';
+    try {
+        const batch = await window.createAdminBulkAccountBatch(supabaseClient, role, uniqueIds);
+        await processAdminBulkAccountBatch(batch, batch.accounts);
+        document.getElementById('bulkAccountIds').value = '';
+        closeModal('bulkAccountCreateModal');
+        const duplicateCount = ids.length - uniqueIds.length;
+        const resultMessage = navigator.onLine
+            ? `Processed ${uniqueIds.length} ${role} account request(s). Download the batch CSV from the dashboard when it is ready.${duplicateCount ? ` Ignored ${duplicateCount} duplicate ID(s).` : ''}`
+            : `Saved ${uniqueIds.length} ${role} account request(s) on this device. Their temporary passwords will be available after sync.${duplicateCount ? ` Ignored ${duplicateCount} duplicate ID(s).` : ''}`;
+        showAlert('success', navigator.onLine ? 'Bulk Account Requests Processed' : 'Bulk Accounts Saved Offline', resultMessage);
+    } catch (error) {
+        errorBox.textContent = error.message || 'Unable to create the bulk account batch.';
+        button.disabled = false;
+        button.textContent = 'Create Accounts';
+        await renderAdminCreatedAccounts();
+    }
+}
+
+async function resumeAdminBulkAccountBatch(batchId) {
+    try {
+        const [batches, accountData] = await Promise.all([
+            window.getAdminBulkAccountBatches(supabaseClient),
+            window.getAdminAccountData(supabaseClient)
+        ]);
+        const batch = batches.find(item => item.batchId === batchId);
+        if (!batch) throw new Error('This bulk account batch was not found on this device.');
+        const accountsToResume = batch.accounts.filter(account => {
+            const queued = accountData.queued.some(item => item.operationId === account.operationId);
+            const completed = accountData.completed.some(item => item.operationId === account.operationId);
+            return !queued && !completed && ['not-started', 'submitting'].includes(account.status);
+        });
+        if (!accountsToResume.length) {
+            throw new Error('There are no interrupted account requests to resume.');
+        }
+        await processAdminBulkAccountBatch(batch, accountsToResume);
+    } catch (error) {
+        showAlert('error', 'Could Not Resume Bulk Batch', error.message || 'Unable to resume this batch.');
+    }
+}
+
+async function downloadAdminBulkAccountBatch(batchId) {
+    try {
+        const [batches, accountData] = await Promise.all([
+            window.getAdminBulkAccountBatches(supabaseClient),
+            window.getAdminAccountData(supabaseClient)
+        ]);
+        const batch = batches.find(item => item.batchId === batchId);
+        if (!batch) throw new Error('This bulk account batch was not found on this device.');
+        const unresolved = batch.accounts.some(account => {
+            const queued = accountData.queued.some(item => item.operationId === account.operationId);
+            const completed = accountData.completed.some(item => item.operationId === account.operationId);
+            return queued || (!completed
+                && !['created', 'failed', 'credentials-cleared', 'account-removed'].includes(account.status));
+        });
+        if (unresolved) {
+            throw new Error('Wait for every account in this batch to sync before downloading its CSV.');
+        }
+
+        const rows = [
+            ['Account Type', 'ID', 'Temporary Password', 'Result'],
+            ...batch.accounts.map(account => {
+                const result = accountData.completed.find(item => item.operationId === account.operationId);
+                const successful = result && !result.failed;
+                return [
+                    batch.role === 'student' ? 'Student' : 'Teacher',
+                    account.accountId,
+                    successful ? result.temporaryPassword || '' : '',
+                    successful
+                        ? 'Created'
+                        : account.status === 'credentials-cleared'
+                            ? `Created; ${account.error || 'temporary password cleared'}`
+                            : account.status === 'account-removed'
+                                ? 'Account deleted; saved temporary password unavailable'
+                                : account.status === 'created'
+                                    ? 'Created; temporary password unavailable'
+                            : result?.status || account.error || 'Not created'
+                ];
+            })
+        ];
+        const csvEscape = value => {
+            let text = String(value ?? '');
+            if (/^[=+\-@]/.test(text)) text = `'${text}`;
+            return `"${text.replace(/"/g, '""')}"`;
+        };
+        const csv = `\uFEFF${rows.map(row => row.map(csvEscape).join(',')).join('\r\n')}`;
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `ams-${batch.role}-credentials-${batch.createdAt.slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+        showAlert('error', 'Could Not Download Bulk Credentials', error.message || 'Unable to create the CSV file.');
+    }
+}
 
 async function removeFailedAdminAccountRequest(operationId) {
     showConfirmModal('Remove Failed Account Request', 'Remove this failed account request from this device? No account will be created or deleted.', async () => {
