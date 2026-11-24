@@ -24,6 +24,7 @@
         label{font-weight:600;font-size:14px;color:var(--primary)}
         input,select{width:100%;min-height:46px;padding:11px 13px;border:1px solid var(--border);border-radius:8px;background:white;color:var(--text);font:inherit}
         input:focus,select:focus{outline:3px solid rgba(31,107,255,.15);border-color:var(--secondary)}
+        .password-input-wrap{position:relative}.password-input-wrap input{padding-right:48px}.password-input-wrap .password-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;background:transparent;color:var(--gray);cursor:pointer;display:grid;place-items:center}.password-input-wrap .password-toggle i{pointer-events:none}
         .password-note{font-size:12px;color:var(--gray);line-height:1.4}
         .submit-button{margin-top:22px;width:100%;min-height:48px;border:0;border-radius:8px;background:var(--primary);color:white;font-weight:700;font-size:15px;cursor:pointer}
         .submit-button:hover{background:#082d6b}
@@ -52,7 +53,7 @@
                     <div class="field"><label for="studentLastName">Last name</label><input id="studentLastName" type="text" autocomplete="family-name" required></div>
                     <div class="field"><label for="studentGender">Gender</label><select id="studentGender" required><option value="">Select Gender</option><option value="Male">Male</option><option value="Female">Female</option></select></div>
                     <div class="field"><label for="studentDepartment">Department</label><select id="studentDepartment" onchange="loadOnboardingMajors()" required><option value="">Select Department</option></select></div>
-                    <div class="field"><label for="studentYear">Year level</label><select id="studentYear" onchange="loadOnboardingSections()" required><option value="">Select Year</option><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
+                    <div class="field"><label for="studentYear">Year level</label><select id="studentYear" onchange="loadOnboardingMajors()" required><option value="">Select Year</option><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
                     <div class="field"><label for="studentMajor">Major</label><select id="studentMajor" onchange="loadOnboardingSections()" required><option value="">Select Major</option></select></div>
                     <div class="field"><label for="studentSection">Section</label><select id="studentSection" required><option value="">Select Section</option></select></div>
                     <div class="field full"><label for="studentEmail">Email address</label><input id="studentEmail" type="email" autocomplete="email" required></div>
@@ -159,12 +160,13 @@
 
         async function loadOnboardingMajors(){
             const departmentId=document.getElementById('studentDepartment').value;
+            const yearLevel=document.getElementById('studentYear').value;
             const majorSelect=document.getElementById('studentMajor');
             const sectionSelect=document.getElementById('studentSection');
             majorSelect.innerHTML='<option value="">Select Major</option>';
             sectionSelect.innerHTML='<option value="">Select Section</option>';
-            if(!departmentId) return;
-            const response=await fetch(FUNCTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`},body:JSON.stringify({action:'load-setup-options',scope:'majors',department_id:Number(departmentId)})});
+            if(!departmentId||!yearLevel) return;
+            const response=await fetch(FUNCTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`},body:JSON.stringify({action:'load-setup-options',scope:'majors',department_id:Number(departmentId),year_level:yearLevel})});
             const result=await response.json();
             if(!response.ok) throw new Error(result.error||'Unable to load majors.');
             (result.data||[]).forEach(major=>majorSelect.add(new Option(major.major_name,major.major_id)));
