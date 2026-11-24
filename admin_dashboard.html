@@ -9117,12 +9117,20 @@ async function renderAdminCreatedAccounts() {
     const table = document.getElementById('adminCreatedAccountsTable');
     if (!table || !window.getAdminAccountData) return;
     try {
+        const loadOptionalData = async (label, load, fallback) => {
+            try {
+                return await load() || fallback;
+            } catch (error) {
+                console.warn(`Unable to load ${label} for account history.`, error);
+                return fallback;
+            }
+        };
         const [{ queued, completed }, lookups, structureData, structureIdMap, roster] = await Promise.all([
             window.getAdminAccountData(supabaseClient),
-            window.getAdminAccountLookups(supabaseClient),
-            window.getAdminStructureData?.(supabaseClient) || Promise.resolve({ pending: [] }),
-            window.getAdminStructureLocalIdMap?.(supabaseClient) || Promise.resolve(new Map()),
-            window.getAdminStudentRoster?.(supabaseClient) || Promise.resolve(null)
+            loadOptionalData('saved account lookups', () => window.getAdminAccountLookups?.(supabaseClient), null),
+            loadOptionalData('pending academic changes', () => window.getAdminStructureData?.(supabaseClient), { pending: [] }),
+            loadOptionalData('local academic ID mappings', () => window.getAdminStructureLocalIdMap?.(supabaseClient), new Map()),
+            loadOptionalData('saved student roster', () => window.getAdminStudentRoster?.(supabaseClient), null)
         ]);
         const structurePending = structureData?.pending || [];
         const cachedStudents = new Map((roster?.students || []).map(student => [String(student.student_number), student]));
@@ -9266,7 +9274,7 @@ async function renderAdminCreatedAccounts() {
                 failed: Boolean(item.lastError),
                 role: item.role,
                 name: formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name)
-                    || (item.role === 'teacher' ? 'Name pending first login' : 'Not logged in yet'),
+                    || (item.role === 'teacher' ? 'Not logged in yet (pending first login)' : 'Not logged in yet'),
                 firstName: item.payload.first_name,
                 middleInitial: item.payload.middle_initial,
                 lastName: item.payload.last_name,
@@ -9332,7 +9340,7 @@ async function renderAdminCreatedAccounts() {
                     failed: Boolean(item.failed),
                     name: item.role === 'student'
                         ? formatName(studentFirstName, studentNameSource?.middle_initial, studentLastName) || 'Not logged in yet'
-                        : formatName(teacherFirstName, teacherPayload?.middle_initial, teacherLastName) || 'Name pending first login',
+                        : formatName(teacherFirstName, teacherPayload?.middle_initial, teacherLastName) || 'Not logged in yet (pending first login)',
                     firstName: teacherPayload.first_name,
                     middleInitial: teacherPayload.middle_initial,
                     lastName: teacherPayload.last_name,
@@ -9429,6 +9437,11 @@ async function renderAdminCreatedAccounts() {
         filterAdminDashboardRows('adminCreatedAccountsTable', 'adminCreatedAccountsSearch');
     } catch (error) {
         console.warn('Unable to render saved account creation results.', error);
+        table.replaceChildren();
+        const row = table.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = 8;
+        cell.textContent = `Unable to load account history: ${error?.message || 'Please try again.'}`;
     }
 }
 
@@ -11341,7 +11354,9 @@ async function loadTeachersManagement() {
         const row = table.insertRow();
         const teacherUser = Array.isArray(teacher.users) ? teacher.users[0] : teacher.users;
         const name = formatName(teacher.first_name, teacher.middle_initial, teacher.last_name)
-            || (teacher.pendingCreate || teacherUser?.onboarding_required ? 'Name pending first login' : 'Name not set');
+            || (teacher.pendingCreate || teacherUser?.onboarding_required
+                ? 'Not logged in yet (pending first login)'
+                : 'Name not set');
         [teacher.teacher_number, name, teacher.pendingCreate
             ? teacher.lastError ? `Needs attention: ${teacher.lastError}` : teacher.processing ? 'Creating' : 'Waiting to sync'
             : ((teacher.users?.email || teacher.users?.[0]?.email)?.endsWith('@accounts.tcc.invalid')
