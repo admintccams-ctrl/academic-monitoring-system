@@ -816,55 +816,11 @@ async function loadStudentDashboard() {
             .eq('user_id', user.id)
             .maybeSingle();
 
-        // If student row missing, create a minimal record so dashboard actions can proceed
-        if (!student && !studentError) {
-            try {
-                const displayName = (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || '';
-                const [firstName, ...rest] = (displayName || user.email || '').split(' ');
-                const lastName = rest.join(' ');
-
-                const { error: createErr } = await supabaseClient
-                    .from('students')
-                    .insert([
-                        {
-                            user_id: user.id,
-                            student_number: `S-${Date.now()}`,
-                            first_name: firstName || 'Student',
-                            last_name: lastName || '',
-                            section_id: null
-                        }
-                    ]);
-
-                if (createErr) console.error('Failed to create minimal student record', createErr);
-
-                // re-fetch student
-                const re = await supabaseClient
-                    .from('students')
-                    .select(`
-                        student_id,
-                        first_name,
-                        last_name,
-                        section_id,
-                        sections(
-                            section_id,
-                            section_name,
-                            year_level,
-                            majors(major_id, major_name)
-                        )
-                    `)
-                    .eq('user_id', user.id)
-                    .maybeSingle();
-
-                student = re.data;
-                studentError = re.error;
-            } catch (err) {
-                console.error('Error ensuring student row', err);
-                return;
-            }
-        }
-
-        if (studentError || !student) {
-            console.error('Student record not found', studentError);
+        if (studentError) throw studentError;
+        if (!student) {
+            console.warn('Student record not found for the signed-in user.');
+            document.getElementById('welcomeName').textContent = 'Student profile not found';
+            document.getElementById('studentSection').textContent = 'Contact the administrator to complete account setup.';
             return;
         }
 
@@ -873,7 +829,11 @@ async function loadStudentDashboard() {
         // Update welcome and section
         const welcomeEl = document.getElementById('welcomeName');
         const sectionEl = document.getElementById('studentSection');
-        if (welcomeEl) welcomeEl.textContent = `Welcome, ${student.first_name} ${student.last_name}`;
+        const studentName = [student.first_name, student.last_name]
+            .map(name => String(name || '').trim())
+            .filter(Boolean)
+            .join(' ');
+        if (welcomeEl) welcomeEl.textContent = studentName ? `Welcome, ${studentName}` : 'Welcome • Name not set';
         if (sectionEl) sectionEl.textContent = `${student.sections?.majors?.major_name || ''} ${student.sections?.year_level || ''} • ${student.sections?.section_name || ''}`;
 
         const { data: activeSemester, error: semesterError } = await supabaseClient

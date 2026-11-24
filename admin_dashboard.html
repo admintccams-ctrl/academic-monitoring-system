@@ -9159,7 +9159,7 @@ async function renderAdminCreatedAccounts() {
                     : Promise.resolve({ data: [] }),
                 completedStudentNumbers.length
                     ? supabaseClient.from('students')
-                        .select('student_id, student_number, section_id, sections(section_name, year_level)')
+                        .select('student_id, student_number, first_name, middle_initial, last_name, section_id, users!students_user_id_fkey(onboarding_required), sections(section_name, year_level)')
                         .in('student_number', completedStudentNumbers)
                     : Promise.resolve({ data: [] })
             ]);
@@ -9298,6 +9298,12 @@ async function renderAdminCreatedAccounts() {
                         ? cachedStudent.section_id
                         : item.payload.section_id;
                 const studentId = student?.student_id || cachedStudent?.student_id;
+                const studentProfile = student || cachedStudent;
+                const studentNameSource = studentProfile || item.payload;
+                const studentFirstName = String(studentNameSource?.first_name || '').trim();
+                const studentLastName = String(studentNameSource?.last_name || '').trim();
+                const studentNeedsSetup = Boolean(studentProfile
+                    && (!studentFirstName || !studentLastName || studentProfile.users?.onboarding_required));
                 const teacherEdit = item.role === 'teacher'
                     ? queued.filter(operation => operation.role === 'teacher' && operation.action === 'admin-edit'
                         && String(operation.payload.teacher_id) === String(teacher?.teacher_id || item.payload.teacher_id || item.payload.profile_id || '')).at(-1)
@@ -9316,7 +9322,9 @@ async function renderAdminCreatedAccounts() {
                     role: item.role,
                     operationId: item.failed ? item.operationId : null,
                     failed: Boolean(item.failed),
-                    name: formatName(teacherPayload.first_name, teacherPayload.middle_initial, teacherPayload.last_name),
+                    name: item.role === 'student'
+                        ? formatName(studentFirstName, studentNameSource?.middle_initial, studentLastName) || 'Not logged in yet'
+                        : formatName(teacherPayload.first_name, teacherPayload.middle_initial, teacherPayload.last_name),
                     firstName: teacherPayload.first_name,
                     middleInitial: teacherPayload.middle_initial,
                     lastName: teacherPayload.last_name,
@@ -9328,9 +9336,11 @@ async function renderAdminCreatedAccounts() {
                     year: item.role !== 'student' || !enrollment.sectionId ? '—' : enrollment.year,
                     section: item.role !== 'student' ? '—' : enrollment.name,
                     password: item.temporaryPassword || (item.failed ? 'Not created' : ''),
-                    status: item.status || (item.role === 'student' && student && (!String(student.first_name || '').trim() || !String(student.last_name || '').trim() || Boolean(student.users?.onboarding_required))
-                        ? 'Pending first login'
-                        : teacherEdit ? 'Edit waiting for connection' : 'Created')
+                    status: item.role === 'student' && student
+                        ? studentNeedsSetup ? 'Pending first login' : 'Setup complete'
+                        : item.status || (item.role === 'student' && studentNeedsSetup
+                            ? 'Pending first login'
+                            : teacherEdit ? 'Edit waiting for connection' : 'Created')
                 };
             }).filter(Boolean),
             ...queuedTeacherDeletions.map(item => ({
@@ -10162,6 +10172,9 @@ window.addEventListener('admin-account-data-changed', () => {
         && document.getElementById('manageStudentYear')?.value) {
         void loadStudentsBySection();
     }
+});
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void renderAdminCreatedAccounts();
 });
 window.addEventListener('admin-password-reset-data-changed', () => {
     void renderAdminPasswordResets();
