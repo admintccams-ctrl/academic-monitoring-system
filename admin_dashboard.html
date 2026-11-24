@@ -1253,10 +1253,7 @@ table td{
                         <h2>Accounts Created on This Device</h2>
                         <p>Queued account requests and temporary credentials returned after creation</p>
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn" type="button" onclick="openBulkAccountCreateModal()">Bulk Create Accounts</button>
-                        <button class="btn reject-btn" onclick="clearAdminCreatedAccounts()">Clear saved credentials</button>
-                    </div>
+                    <button class="btn reject-btn" onclick="clearAdminCreatedAccounts()">Clear saved credentials</button>
                 </div>
                 <div class="dashboard-search-field">
                     <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
@@ -1267,16 +1264,6 @@ table td{
                         <thead><tr><th style="position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Name</th><th style="position:sticky;top:0;background:#fff;z-index:1;">ID</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Year</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Section</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Temporary Password</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="position:sticky;top:0;background:#fff;z-index:1;">Action</th></tr></thead>
                         <tbody id="adminCreatedAccountsTable"><tr><td colspan="8">No account requests yet</td></tr></tbody>
                     </table>
-                </div>
-                <div style="margin-top:22px;">
-                    <h3>Bulk Account Creation Downloads</h3>
-                    <p>Downloads become available after every account in that batch has synced or been marked failed.</p>
-                    <div class="table-responsive">
-                        <table>
-                            <thead><tr><th>Account Type</th><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
-                            <tbody id="adminBulkAccountBatchesTable"><tr><td colspan="5">No bulk account batches yet</td></tr></tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
 
@@ -2159,9 +2146,10 @@ onchange="loadSubjectsForTeacherAssign()">
     margin-bottom:15px;
 ">
 
-    <button class="btn" onclick="openCreateStudentModal()" style="margin-bottom:12px;">
-        Create Student Account
-    </button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button class="btn" onclick="openCreateStudentModal()">Create Student Account</button>
+        <button class="btn" type="button" onclick="openBulkAccountCreateModal('student')">Bulk Create Student Accounts</button>
+    </div>
     <input
     type="text"
     id="studentSearchInput"
@@ -2223,6 +2211,17 @@ onchange="loadSubjectsForTeacherAssign()">
 
             </table>
 
+        </div>
+
+        <div style="margin-top:22px;">
+            <h3>Bulk Student Account Downloads</h3>
+            <p>Downloads become available after every account in a batch has synced or been marked failed.</p>
+            <div class="table-responsive">
+                <table>
+                    <thead><tr><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
+                    <tbody id="adminStudentBulkAccountBatchesTable"><tr><td colspan="4">No bulk student batches yet</td></tr></tbody>
+                </table>
+            </div>
         </div>
 
     </div>
@@ -2388,7 +2387,10 @@ onchange="loadSubjectsForTeacherAssign()">
 
         </div>
 
-        <button class="btn" onclick="openCreateTeacherModal()">Create Teacher Account</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn" onclick="openCreateTeacherModal()">Create Teacher Account</button>
+            <button class="btn" type="button" onclick="openBulkAccountCreateModal('teacher')">Bulk Create Teacher Accounts</button>
+        </div>
 
     </div>
 
@@ -2481,6 +2483,17 @@ onchange="loadSubjectsForTeacherAssign()">
 
         </div>
 
+        <div style="margin-top:22px;">
+            <h3>Bulk Teacher Account Downloads</h3>
+            <p>Downloads become available after every account in a batch has synced or been marked failed.</p>
+            <div class="table-responsive">
+                <table>
+                    <thead><tr><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
+                    <tbody id="adminTeacherBulkAccountBatchesTable"><tr><td colspan="4">No bulk teacher batches yet</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
     </div>
 
 </div>
@@ -2510,16 +2523,12 @@ onchange="loadSubjectsForTeacherAssign()">
 <div class="modal" id="bulkAccountCreateModal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Bulk Create Accounts</h3>
+            <h3 id="bulkAccountCreateTitle">Bulk Create Accounts</h3>
             <button class="close-btn" type="button" onclick="closeModal('bulkAccountCreateModal')">X</button>
         </div>
         <div class="modal-body">
-            <p>Create student or teacher accounts using IDs only. Their names and other profile details are completed at first login.</p>
-            <label for="bulkAccountRole">Account type</label>
-            <select id="bulkAccountRole" style="width:100%;margin:8px 0 14px;padding:12px;border:1px solid #dbe4f0;border-radius:8px;">
-                <option value="student">Student</option>
-                <option value="teacher">Teacher</option>
-            </select>
+            <p id="bulkAccountCreateDescription">Enter account IDs. Names and other profile details are completed at first login.</p>
+            <input id="bulkAccountRole" type="hidden" value="">
             <label for="bulkAccountIds">Account IDs</label>
             <textarea id="bulkAccountIds" rows="8" placeholder="Enter one ID per line, or separate IDs with commas" style="width:100%;margin:8px 0;padding:12px;border:1px solid #dbe4f0;border-radius:8px;resize:vertical;"></textarea>
             <p>Offline batches are saved on this device. Temporary passwords will be available in a CSV download after sync. Duplicate IDs in this list are ignored.</p>
@@ -9160,63 +9169,71 @@ async function callStudentAccountFunction(action, payload) {
 }
 
 function renderAdminBulkAccountBatches(accountData, batches) {
-    const table = document.getElementById('adminBulkAccountBatchesTable');
-    if (!table) return;
-    table.replaceChildren();
-    if (!batches?.length) {
-        const row = table.insertRow();
-        const cell = row.insertCell();
-        cell.colSpan = 5;
-        cell.textContent = 'No bulk account batches yet';
-        return;
-    }
-
     const queued = accountData?.queued || [];
     const completed = accountData?.completed || [];
-    batches.forEach(batch => {
-        const states = batch.accounts.map(account => {
-            const queuedItem = queued.find(item => item.operationId === account.operationId);
-            if (queuedItem) return queuedItem.lastError ? 'attention' : 'queued';
-            const result = completed.find(item => item.operationId === account.operationId);
-            if (result) return result.failed ? 'failed' : 'created';
-            return account.status || 'not-started';
-        });
-        const createdCount = states.filter(state => ['created', 'credentials-cleared', 'account-removed'].includes(state)).length;
-        const failedCount = states.filter(state => state === 'failed').length;
-        const clearedCount = states.filter(state => state === 'credentials-cleared').length;
-        const removedCount = states.filter(state => state === 'account-removed').length;
-        const queuedCount = states.filter(state => state === 'queued').length;
-        const attentionCount = states.filter(state => state === 'attention').length;
-        const resumableCount = states.filter(state => ['not-started', 'submitting'].includes(state)).length;
-        const ready = states.every(state => ['created', 'failed', 'credentials-cleared', 'account-removed'].includes(state));
-        const status = ready
-            ? `${createdCount} created, ${failedCount} failed${clearedCount ? `, ${clearedCount} password(s) cleared` : ''}${removedCount ? `, ${removedCount} deleted` : ''}`
-            : attentionCount
-                ? `${attentionCount} need attention; resolve or remove the queued requests`
-                : queuedCount
-                    ? `${queuedCount} waiting for sync`
-                    : `${resumableCount} need to be resumed`;
-        const row = table.insertRow();
-        [batch.role === 'student' ? 'Student' : 'Teacher',
-            String(batch.accounts.length),
-            new Date(batch.createdAt).toLocaleString(),
-            status]
-            .forEach(value => row.insertCell().textContent = value);
-        const actionCell = row.insertCell();
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn';
-        if (ready) {
-            button.textContent = 'Download CSV';
-            button.addEventListener('click', () => downloadAdminBulkAccountBatch(batch.batchId));
-        } else if (resumableCount && !queuedCount && !attentionCount) {
-            button.textContent = 'Resume';
-            button.addEventListener('click', () => resumeAdminBulkAccountBatch(batch.batchId));
-        } else {
-            button.textContent = 'Waiting for sync';
-            button.disabled = true;
+    const tables = {
+        student: document.getElementById('adminStudentBulkAccountBatchesTable'),
+        teacher: document.getElementById('adminTeacherBulkAccountBatchesTable')
+    };
+    Object.entries(tables).forEach(([role, table]) => {
+        if (!table) return;
+        const roleBatches = (batches || []).filter(batch => batch.role === role);
+        table.replaceChildren();
+        if (!roleBatches.length) {
+            const row = table.insertRow();
+            const cell = row.insertCell();
+            cell.colSpan = 4;
+            cell.textContent = `No bulk ${role} batches yet`;
+            return;
         }
-        actionCell.appendChild(button);
+
+        roleBatches.forEach(batch => {
+            const states = batch.accounts.map(account => {
+                const queuedItem = queued.find(item => item.operationId === account.operationId);
+                if (queuedItem) return queuedItem.lastError ? 'attention' : 'queued';
+                const result = completed.find(item => item.operationId === account.operationId);
+                if (result) return result.failed ? 'failed' : 'created';
+                return account.status || 'not-started';
+            });
+            const createdCount = states.filter(state =>
+                ['created', 'credentials-cleared', 'account-removed'].includes(state)).length;
+            const failedCount = states.filter(state => state === 'failed').length;
+            const clearedCount = states.filter(state => state === 'credentials-cleared').length;
+            const removedCount = states.filter(state => state === 'account-removed').length;
+            const queuedCount = states.filter(state => state === 'queued').length;
+            const attentionCount = states.filter(state => state === 'attention').length;
+            const resumableCount = states.filter(state => ['not-started', 'submitting'].includes(state)).length;
+            const ready = states.every(state =>
+                ['created', 'failed', 'credentials-cleared', 'account-removed'].includes(state));
+            const status = ready
+                ? `${createdCount} created, ${failedCount} failed${clearedCount ? `, ${clearedCount} password(s) cleared` : ''}${removedCount ? `, ${removedCount} deleted` : ''}`
+                : attentionCount
+                    ? `${attentionCount} need attention; resolve or remove the queued requests`
+                    : queuedCount
+                        ? `${queuedCount} waiting for sync`
+                        : `${resumableCount} need to be resumed`;
+            const row = table.insertRow();
+            [
+                String(batch.accounts.length),
+                new Date(batch.createdAt).toLocaleString(),
+                status
+            ].forEach(value => row.insertCell().textContent = value);
+            const actionCell = row.insertCell();
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn';
+            if (ready) {
+                button.textContent = 'Download CSV';
+                button.addEventListener('click', () => downloadAdminBulkAccountBatch(batch.batchId));
+            } else if (resumableCount && !queuedCount && !attentionCount) {
+                button.textContent = 'Resume';
+                button.addEventListener('click', () => resumeAdminBulkAccountBatch(batch.batchId));
+            } else {
+                button.textContent = 'Waiting for sync';
+                button.disabled = true;
+            }
+            actionCell.appendChild(button);
+        });
     });
 }
 
@@ -9552,25 +9569,37 @@ async function renderAdminCreatedAccounts() {
         const cell = row.insertCell();
         cell.colSpan = 8;
         cell.textContent = `Unable to load account history: ${error?.message || 'Please try again.'}`;
-        const batchTable = document.getElementById('adminBulkAccountBatchesTable');
-        if (batchTable) {
+        ['adminStudentBulkAccountBatchesTable', 'adminTeacherBulkAccountBatchesTable'].forEach(tableId => {
+            const batchTable = document.getElementById(tableId);
+            if (!batchTable) return;
             batchTable.replaceChildren();
             const batchRow = batchTable.insertRow();
             const batchCell = batchRow.insertCell();
-            batchCell.colSpan = 5;
+            batchCell.colSpan = 4;
             batchCell.textContent = `Unable to load bulk batches: ${error?.message || 'Please try again.'}`;
-        }
+        });
     }
 }
 
 window.renderAdminCreatedAccounts = renderAdminCreatedAccounts;
 
-function openBulkAccountCreateModal() {
+function openBulkAccountCreateModal(role) {
+    if (!['student', 'teacher'].includes(role)) {
+        showAlert('error', 'Choose Account Type', 'Open bulk creation from Manage Students or Manage Teachers.');
+        return;
+    }
+    document.getElementById('bulkAccountRole').value = role;
+    document.getElementById('bulkAccountCreateTitle').textContent =
+        `Bulk Create ${role === 'student' ? 'Student' : 'Teacher'} Accounts`;
+    document.getElementById('bulkAccountCreateDescription').textContent = role === 'student'
+        ? 'Enter student IDs. Students add their name, gender, enrollment, and email during first login.'
+        : 'Enter teacher IDs. Teachers add their name and Gmail address during first login.';
     document.getElementById('bulkAccountIds').value = '';
     document.getElementById('bulkAccountCreateProgress').textContent = '';
     document.getElementById('bulkAccountCreateError').textContent = '';
     document.getElementById('bulkAccountCreateButton').disabled = false;
-    document.getElementById('bulkAccountCreateButton').textContent = 'Create Accounts';
+    document.getElementById('bulkAccountCreateButton').textContent =
+        `Create ${role === 'student' ? 'Student' : 'Teacher'} Accounts`;
     openModal('bulkAccountCreateModal');
 }
 
@@ -9658,14 +9687,15 @@ async function createBulkAdminAccounts() {
         document.getElementById('bulkAccountIds').value = '';
         closeModal('bulkAccountCreateModal');
         const duplicateCount = ids.length - uniqueIds.length;
+        const managementSection = role === 'student' ? 'Manage Students' : 'Manage Teachers';
         const resultMessage = navigator.onLine
-            ? `Processed ${uniqueIds.length} ${role} account request(s). Download the batch CSV from the dashboard when it is ready.${duplicateCount ? ` Ignored ${duplicateCount} duplicate ID(s).` : ''}`
+            ? `Processed ${uniqueIds.length} ${role} account request(s). Download the batch CSV from ${managementSection} when it is ready.${duplicateCount ? ` Ignored ${duplicateCount} duplicate ID(s).` : ''}`
             : `Saved ${uniqueIds.length} ${role} account request(s) on this device. Their temporary passwords will be available after sync.${duplicateCount ? ` Ignored ${duplicateCount} duplicate ID(s).` : ''}`;
         showAlert('success', navigator.onLine ? 'Bulk Account Requests Processed' : 'Bulk Accounts Saved Offline', resultMessage);
     } catch (error) {
         errorBox.textContent = error.message || 'Unable to create the bulk account batch.';
         button.disabled = false;
-        button.textContent = 'Create Accounts';
+        button.textContent = `Create ${role === 'student' ? 'Student' : 'Teacher'} Accounts`;
         await renderAdminCreatedAccounts();
     }
 }
