@@ -126,8 +126,12 @@
             session=await supabaseClient.auth.getSession().then(result=>result.data.session);
             currentAccessToken=session?.access_token||'';
             if(!currentAccessToken){errorBox.textContent='Your sign-in session expired. Return to Login and try again.';return;}
-            const {data:appUser,error:appError}=await supabaseClient.from('users').select('role_id, email, onboarding_required, force_password_change').eq('user_id',user.id).maybeSingle();
-            if(appError||!appUser||Number(appUser.role_id)!==3){errorBox.textContent='This setup page is only for student accounts.';return;}
+            const appUserResponse=await fetch(`${SUPABASE_URL}/rest/v1/users?select=role_id,email,onboarding_required,force_password_change&user_id=eq.${encodeURIComponent(user.id)}&limit=1`,{
+                headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`}
+            });
+            const appUsers=await appUserResponse.json().catch(()=>[]);
+            const appUser=Array.isArray(appUsers)?appUsers[0]:null;
+            if(!appUserResponse.ok||!appUser||Number(appUser.role_id)!==3){errorBox.textContent='This setup page is only for student accounts.';return;}
             const internalStudentLogin=Boolean(appUser.email?.endsWith('@accounts.tcc.invalid'));
             const requestedMode=new URLSearchParams(window.location.search).get('mode');
             const requestedPasswordMode=requestedMode==='password';
@@ -152,12 +156,15 @@
             if(passwordOnlyMode) return;
             const departmentSelect=document.getElementById('studentDepartment');
             departmentSelect.innerHTML='<option value="">Select Department</option>';
-            const {data,error}=await supabaseClient.from('departments').select('department_id,department_name').order('department_name');
-            if(error){
+            const response=await fetch(`${SUPABASE_URL}/rest/v1/departments?select=department_id,department_name&order=department_name`,{
+                headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`}
+            });
+            const data=await response.json().catch(()=>[]);
+            if(!response.ok){
                 if(retryCount<2){ return setTimeout(()=>loadOnboardingDepartments(retryCount+1),500); }
-                throw new Error(error.message||'Unable to load departments.');
+                throw new Error(data?.message||'Unable to load departments.');
             }
-            (data||[]).forEach(department=>departmentSelect.add(new Option(department.department_name,department.department_id)));
+            (Array.isArray(data)?data:[]).forEach(department=>departmentSelect.add(new Option(department.department_name,department.department_id)));
         }
 
         async function loadOnboardingMajors(retryCount=0){
@@ -169,28 +176,28 @@
             sectionSelect.innerHTML='<option value="">Select Section</option>';
             if(!departmentId||!yearLevel) return;
 
-            const {data:sections,error}=await supabaseClient
-                .from('sections')
-                .select('major_id')
-                .eq('year_level',yearLevel);
-            if(error){
+            const sectionResponse=await fetch(`${SUPABASE_URL}/rest/v1/sections?select=major_id&year_level=eq.${encodeURIComponent(yearLevel)}&order=major_id`,{
+                headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`}
+            });
+            const sections=await sectionResponse.json().catch(()=>[]);
+            if(!sectionResponse.ok){
                 if(retryCount<2){ return setTimeout(()=>loadOnboardingMajors(retryCount+1),500); }
-                throw new Error(error.message||'Unable to load majors.');
+                throw new Error(sections?.message||'Unable to load majors.');
             }
 
-            const majorIds=[...new Set((sections||[]).map(section=>Number(section.major_id)).filter(Number.isInteger))];
+            const majorIds=[...new Set((Array.isArray(sections)?sections:[]).map(section=>Number(section.major_id)).filter(Number.isInteger))];
             if(!majorIds.length){
                 majorSelect.innerHTML='<option value="">No majors for this department and year</option>';
                 return;
             }
-            const {data:majors,error:majorsError}=await supabaseClient
-                .from('majors')
-                .select('major_id,major_name,department_id')
-                .in('major_id',majorIds)
-                .eq('department_id',Number(departmentId))
-                .order('major_name');
-            if(majorsError) throw new Error(majorsError.message||'Unable to load majors.');
-            (majors||[]).forEach(major=>majorSelect.add(new Option(major.major_name,major.major_id)));
+            const majorIdFilter=majorIds.join(',');
+            const majorResponse=await fetch(`${SUPABASE_URL}/rest/v1/majors?select=major_id,major_name,department_id&major_id=in.(${majorIdFilter})&department_id=eq.${encodeURIComponent(departmentId)}&order=major_name`,{
+                headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`}
+            });
+            const majors=await majorResponse.json().catch(()=>[]);
+            if(!majorResponse.ok) throw new Error(majors?.message||'Unable to load majors.');
+            if(!Array.isArray(majors)||!majors.length){majorSelect.innerHTML='<option value="">No majors for this department and year</option>';return;}
+            majors.forEach(major=>majorSelect.add(new Option(major.major_name,major.major_id)));
         }
 
         async function loadOnboardingSections(){
@@ -199,10 +206,13 @@
             const sectionSelect=document.getElementById('studentSection');
             sectionSelect.innerHTML='<option value="">Select Section</option>';
             if(!majorId||!yearLevel) return;
-            const {data,error}=await supabaseClient.from('sections').select('section_id,section_name').eq('major_id',Number(majorId)).eq('year_level',yearLevel).order('section_name');
-            if(error) throw new Error(error.message||'Unable to load sections.');
-            if(!data||!data.length){ sectionSelect.innerHTML='<option value="">No sections for this major and year</option>'; return; }
-            (data||[]).forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
+            const response=await fetch(`${SUPABASE_URL}/rest/v1/sections?select=section_id,section_name&major_id=eq.${encodeURIComponent(majorId)}&year_level=eq.${encodeURIComponent(yearLevel)}&order=section_name`,{
+                headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`}
+            });
+            const data=await response.json().catch(()=>[]);
+            if(!response.ok) throw new Error(data?.message||'Unable to load sections.');
+            if(!Array.isArray(data)||!data.length){ sectionSelect.innerHTML='<option value="">No sections for this major and year</option>'; return; }
+            data.forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
         }
 
         function setupPasswordToggle(input){
