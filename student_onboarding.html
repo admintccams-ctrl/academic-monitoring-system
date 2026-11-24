@@ -160,7 +160,7 @@
             (data||[]).forEach(department=>departmentSelect.add(new Option(department.department_name,department.department_id)));
         }
 
-        async function loadOnboardingMajors(){
+        async function loadOnboardingMajors(retryCount=0){
             const departmentId=document.getElementById('studentDepartment').value;
             const yearLevel=document.getElementById('studentYear').value;
             const majorSelect=document.getElementById('studentMajor');
@@ -173,10 +173,16 @@
                 .from('sections')
                 .select('major_id')
                 .eq('year_level',yearLevel);
-            if(error) throw new Error(error.message||'Unable to load majors.');
+            if(error){
+                if(retryCount<2){ return setTimeout(()=>loadOnboardingMajors(retryCount+1),500); }
+                throw new Error(error.message||'Unable to load majors.');
+            }
 
             const majorIds=[...new Set((sections||[]).map(section=>Number(section.major_id)).filter(Number.isInteger))];
-            if(!majorIds.length) return;
+            if(!majorIds.length){
+                majorSelect.innerHTML='<option value="">No majors for this department and year</option>';
+                return;
+            }
             const {data:majors,error:majorsError}=await supabaseClient
                 .from('majors')
                 .select('major_id,major_name,department_id')
@@ -195,6 +201,7 @@
             if(!majorId||!yearLevel) return;
             const {data,error}=await supabaseClient.from('sections').select('section_id,section_name').eq('major_id',Number(majorId)).eq('year_level',yearLevel).order('section_name');
             if(error) throw new Error(error.message||'Unable to load sections.');
+            if(!data||!data.length){ sectionSelect.innerHTML='<option value="">No sections for this major and year</option>'; return; }
             (data||[]).forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
         }
 
