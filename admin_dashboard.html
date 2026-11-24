@@ -2831,7 +2831,11 @@ onchange="loadSubjectsForTeacherAssign()">
             const firstName = titleCase(first);
             const lastName = titleCase(last);
             const middleInitial = String(middle || '').trim().replace(/\.$/, '').charAt(0).toLocaleUpperCase();
-            return `${lastName}, ${firstName}${middleInitial ? ` ${middleInitial}.` : ''}`;
+            if (!firstName && !lastName) return '';
+            const name = lastName
+                ? `${lastName}${firstName ? `, ${firstName}` : ''}`
+                : firstName;
+            return `${name}${middleInitial ? ` ${middleInitial}.` : ''}`;
         }
 
         function formatStoredDashboardName(value) {
@@ -9318,7 +9322,7 @@ async function renderAdminCreatedAccounts() {
                     ? queued.filter(operation => operation.role === 'teacher' && operation.action === 'admin-edit'
                         && String(operation.payload.teacher_id) === String(teacher?.teacher_id || item.payload.teacher_id || item.payload.profile_id || '')).at(-1)
                     : null;
-                const teacherProfile = teacher || cachedTeacher;
+                const teacherProfile = teacher;
                 const teacherPayload = teacherEdit?.payload || teacherProfile || item.payload;
                 const teacherFirstName = String(teacherPayload?.first_name || '').trim();
                 const teacherLastName = String(teacherPayload?.last_name || '').trim();
