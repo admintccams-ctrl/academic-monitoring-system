@@ -107,7 +107,7 @@
             document.querySelectorAll('#enrollmentFields [required]').forEach(field=>field.required=false);
             document.querySelector('.setup-header h1').textContent='Choose a New Password';
             document.querySelector('.setup-content>p').textContent='Your administrator reset your password. Choose a new password to continue; your student details and section will stay unchanged.';
-            document.querySelector('#newPassword + .password-note').textContent='Use at least 8 characters.';
+            document.querySelector('#passwordFields .password-note').textContent='Use at least 8 characters.';
             document.getElementById('saveButton').textContent='Save New Password';
         }
 
