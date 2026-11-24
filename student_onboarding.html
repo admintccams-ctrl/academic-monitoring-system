@@ -52,8 +52,8 @@
                     <div class="field"><label for="studentMiddleInitial">Middle initial</label><input id="studentMiddleInitial" type="text" maxlength="10" autocomplete="additional-name"></div>
                     <div class="field"><label for="studentLastName">Last name</label><input id="studentLastName" type="text" autocomplete="family-name" required></div>
                     <div class="field"><label for="studentGender">Gender</label><select id="studentGender" required><option value="">Select Gender</option><option value="Male">Male</option><option value="Female">Female</option></select></div>
-                    <div class="field"><label for="studentDepartment">Department</label><select id="studentDepartment" onchange="loadOnboardingMajors()" required><option value="">Select Department</option></select></div>
                     <div class="field"><label for="studentYear">Year level</label><select id="studentYear" onchange="loadOnboardingMajors()" required><option value="">Select Year</option><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select></div>
+                    <div class="field"><label for="studentDepartment">Department</label><select id="studentDepartment" onchange="loadOnboardingMajors()" required><option value="">Select Department</option></select></div>
                     <div class="field"><label for="studentMajor">Major</label><select id="studentMajor" onchange="loadOnboardingSections()" required><option value="">Select Major</option></select></div>
                     <div class="field"><label for="studentSection">Section</label><select id="studentSection" required><option value="">Select Section</option></select></div>
                     <div class="field full"><label for="studentEmail">Email address</label><input id="studentEmail" type="email" autocomplete="email" required></div>
@@ -148,14 +148,16 @@
             await loadOnboardingDepartments();
         }
 
-        async function loadOnboardingDepartments(){
+        async function loadOnboardingDepartments(retryCount=0){
             if(passwordOnlyMode) return;
             const departmentSelect=document.getElementById('studentDepartment');
             departmentSelect.innerHTML='<option value="">Select Department</option>';
-            const response=await fetch(FUNCTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`},body:JSON.stringify({action:'load-setup-options',scope:'departments'})});
-            const result=await response.json();
-            if(!response.ok) throw new Error(result.error||'Unable to load departments.');
-            (result.data||[]).forEach(department=>departmentSelect.add(new Option(department.department_name,department.department_id)));
+            const {data,error}=await supabaseClient.from('departments').select('department_id,department_name').order('department_name');
+            if(error){
+                if(retryCount<2){ return setTimeout(()=>loadOnboardingDepartments(retryCount+1),500); }
+                throw new Error(error.message||'Unable to load departments.');
+            }
+            (data||[]).forEach(department=>departmentSelect.add(new Option(department.department_name,department.department_id)));
         }
 
         async function loadOnboardingMajors(){
@@ -166,10 +168,23 @@
             majorSelect.innerHTML='<option value="">Select Major</option>';
             sectionSelect.innerHTML='<option value="">Select Section</option>';
             if(!departmentId||!yearLevel) return;
-            const response=await fetch(FUNCTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`},body:JSON.stringify({action:'load-setup-options',scope:'majors',department_id:Number(departmentId),year_level:yearLevel})});
-            const result=await response.json();
-            if(!response.ok) throw new Error(result.error||'Unable to load majors.');
-            (result.data||[]).forEach(major=>majorSelect.add(new Option(major.major_name,major.major_id)));
+
+            const {data:sections,error}=await supabaseClient
+                .from('sections')
+                .select('major_id')
+                .eq('year_level',yearLevel);
+            if(error) throw new Error(error.message||'Unable to load majors.');
+
+            const majorIds=[...new Set((sections||[]).map(section=>Number(section.major_id)).filter(Number.isInteger))];
+            if(!majorIds.length) return;
+            const {data:majors,error:majorsError}=await supabaseClient
+                .from('majors')
+                .select('major_id,major_name,department_id')
+                .in('major_id',majorIds)
+                .eq('department_id',Number(departmentId))
+                .order('major_name');
+            if(majorsError) throw new Error(majorsError.message||'Unable to load majors.');
+            (majors||[]).forEach(major=>majorSelect.add(new Option(major.major_name,major.major_id)));
         }
 
         async function loadOnboardingSections(){
@@ -178,10 +193,9 @@
             const sectionSelect=document.getElementById('studentSection');
             sectionSelect.innerHTML='<option value="">Select Section</option>';
             if(!majorId||!yearLevel) return;
-            const response=await fetch(FUNCTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${currentAccessToken}`},body:JSON.stringify({action:'load-setup-options',scope:'sections',major_id:Number(majorId),year_level:yearLevel})});
-            const result=await response.json();
-            if(!response.ok) throw new Error(result.error||'Unable to load sections.');
-            (result.data||[]).forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
+            const {data,error}=await supabaseClient.from('sections').select('section_id,section_name').eq('major_id',Number(majorId)).eq('year_level',yearLevel).order('section_name');
+            if(error) throw new Error(error.message||'Unable to load sections.');
+            (data||[]).forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
         }
 
         function setupPasswordToggle(input){
