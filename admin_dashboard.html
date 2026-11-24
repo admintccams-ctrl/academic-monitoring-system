@@ -8845,6 +8845,12 @@ async function loadStudentsBySection() {
         const fullName = hasPendingSetup
             ? 'Not logged in yet'
             : formatName(student.first_name, student.middle_initial, student.last_name);
+        const studentEmail = String(student.users?.email || '').trim();
+        const emailDisplay = student.pending || student.pendingEdit || student.pendingAssignment
+            ? 'Waiting to sync'
+            : !studentEmail || studentEmail.endsWith('@accounts.tcc.invalid')
+                ? 'Email not added yet'
+                : studentEmail;
 
         const studentActions = student.pending
             ? `<div>
@@ -8883,7 +8889,7 @@ async function loadStudentsBySection() {
                 ${fullName}
             </td>
 
-            <td>${student.pending || student.pendingEdit || student.pendingAssignment ? 'Waiting to sync' : (hasPendingSetup ? 'Pending first login' : (student.users?.email?.endsWith('@accounts.tcc.invalid') ? 'Email not added yet' : (student.users?.email || 'N/A')))}</td>
+            <td>${emailDisplay}</td>
 
             <td>
 
