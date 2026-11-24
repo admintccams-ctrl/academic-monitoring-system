@@ -2221,22 +2221,8 @@ onchange="loadSubjectsForTeacherAssign()">
                 <button class="close-btn" onclick="closeCreateStudentModal()">X</button>
             </div>
             <div class="modal-body">
-                <p>Create an account using the student's official ID and name. A generated temporary password is shown once after creation.</p>
+                <p>Enter the student's official ID. A generated temporary password is shown once after creation; the student completes the name, gender, enrollment, email, and password fields on first login.</p>
                 <input id="createStudentNumber" type="text" placeholder="Student ID" autocomplete="off">
-                <input id="createStudentFirstName" type="text" placeholder="First name">
-                <input id="createStudentMiddleInitial" type="text" placeholder="Middle initial (optional)">
-                <input id="createStudentLastName" type="text" placeholder="Last name">
-                <select id="createStudentGender" required>
-                    <option value="">Select Gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                </select>
-                <select id="createStudentDepartment" onchange="loadCreateStudentMajors()"><option value="">Select Department</option></select>
-                <select id="createStudentYear" onchange="loadCreateStudentSections()">
-                    <option value="">Select Year</option><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option>
-                </select>
-                <select id="createStudentMajor" onchange="loadCreateStudentSections()"><option value="">Select Major</option></select>
-                <select id="createStudentSection"><option value="">Select Section</option></select>
                 <button class="btn" id="createStudentSubmitButton" onclick="createStudentAccount()">Create Account</button>
                 <div id="createdStudentCredentials" style="display:none; padding:14px; background:#f1f5f9; border-radius:8px; overflow-wrap:anywhere;">
                     <strong>Give these credentials to the student now</strong>
@@ -2928,7 +2914,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=181"></script>
+    <script src="portal-offline.js?v=182"></script>
     <script>
 
         const SUPABASE_URL =
@@ -10207,17 +10193,8 @@ function openCreateStudentModal() {
     queuedStudentCreateEditOperationId = null;
     document.getElementById('createStudentSubmitButton').textContent = 'Create Account';
     document.getElementById('createStudentNumber').value = '';
-    document.getElementById('createStudentFirstName').value = '';
-    document.getElementById('createStudentMiddleInitial').value = '';
-    document.getElementById('createStudentLastName').value = '';
-    document.getElementById('createStudentGender').value = '';
-    document.getElementById('createStudentDepartment').innerHTML = '<option value="">Select Department</option>';
-    document.getElementById('createStudentYear').value = '';
-    document.getElementById('createStudentMajor').innerHTML = '<option value="">Select Major</option>';
-    document.getElementById('createStudentSection').innerHTML = '<option value="">Select Section</option>';
     document.getElementById('createStudentError').textContent = '';
     document.getElementById('createdStudentCredentials').style.display = 'none';
-    loadCreateStudentDepartments().catch(error => document.getElementById('createStudentError').textContent = error.message);
     openModal('createStudentModal');
 }
 
@@ -10266,28 +10243,8 @@ async function openEditQueuedStudentAccount(operationId) {
             throw new Error('This request has already started syncing and cannot be changed offline.');
         }
         const { pending: structurePending, lookups } = await window.getAdminStructureData(supabaseClient);
-        const effectiveYear = getProjectedSectionYear(
-            item.payload.section_id,
-            item.payload.year_level,
-            structurePending,
-            lookups
-        );
         queuedStudentCreateEditOperationId = operationId;
         document.getElementById('createStudentNumber').value = item.payload.student_number || '';
-        document.getElementById('createStudentFirstName').value = item.payload.first_name || '';
-        document.getElementById('createStudentMiddleInitial').value = item.payload.middle_initial || '';
-        document.getElementById('createStudentLastName').value = item.payload.last_name || '';
-        document.getElementById('createStudentGender').value = item.payload.gender || '';
-        document.getElementById('createStudentYear').value = effectiveYear;
-        document.getElementById('createStudentDepartment').innerHTML = '<option value="">Select Department</option>';
-        document.getElementById('createStudentMajor').innerHTML = '<option value="">Select Major</option>';
-        document.getElementById('createStudentSection').innerHTML = '<option value="">Select Section</option>';
-        await loadCreateStudentDepartments();
-        document.getElementById('createStudentDepartment').value = String(item.payload.department_id || '');
-        await loadCreateStudentMajors();
-        document.getElementById('createStudentMajor').value = String(item.payload.major_id || '');
-        await loadCreateStudentSections();
-        document.getElementById('createStudentSection').value = String(item.payload.section_id || '');
         document.getElementById('createStudentSubmitButton').textContent = 'Save Changes';
         openModal('createStudentModal');
     } catch (error) {
@@ -10318,15 +10275,7 @@ async function createStudentAccount() {
     errorBox.textContent = '';
     try {
         const payload = {
-            student_number: document.getElementById('createStudentNumber').value.trim(),
-            first_name: document.getElementById('createStudentFirstName').value.trim(),
-            middle_initial: document.getElementById('createStudentMiddleInitial').value.trim(),
-            last_name: document.getElementById('createStudentLastName').value.trim(),
-            gender: document.getElementById('createStudentGender').value,
-            department_id: document.getElementById('createStudentDepartment').value,
-            major_id: document.getElementById('createStudentMajor').value,
-            year_level: document.getElementById('createStudentYear').value,
-            section_id: document.getElementById('createStudentSection').value
+            student_number: document.getElementById('createStudentNumber').value.trim()
         };
         if (queuedStudentCreateEditOperationId) {
             await window.updateQueuedAdminStudentCreation(supabaseClient, queuedStudentCreateEditOperationId, payload);
@@ -10335,7 +10284,6 @@ async function createStudentAccount() {
             showAlert('success', 'Queued Student Updated', 'The saved student account details were updated on this device.');
             closeCreateStudentModal();
             await renderAdminCreatedAccounts();
-            await showManagedStudentsInSection(payload);
             return;
         }
         const result = await window.submitAdminAccountCreation(
@@ -10347,26 +10295,16 @@ async function createStudentAccount() {
         );
         if (result.queued) {
             document.getElementById('createStudentNumber').value = '';
-            document.getElementById('createStudentFirstName').value = '';
-            document.getElementById('createStudentMiddleInitial').value = '';
-            document.getElementById('createStudentLastName').value = '';
-            document.getElementById('createStudentGender').value = '';
             document.getElementById('createdStudentCredentials').style.display = 'none';
             await renderAdminCreatedAccounts();
-            await showManagedStudentsInSection(payload);
             return;
         }
         document.getElementById('createStudentNumber').value = '';
-        document.getElementById('createStudentFirstName').value = '';
-        document.getElementById('createStudentMiddleInitial').value = '';
-        document.getElementById('createStudentLastName').value = '';
-        document.getElementById('createStudentGender').value = '';
         document.getElementById('createdStudentLoginId').textContent = result.login_id;
         document.getElementById('createdStudentPassword').textContent = result.temporary_password;
         document.getElementById('createdStudentCredentials').style.display = 'block';
         showAlert('success', 'Student Account Created', 'Give the Student ID and temporary password to the student now.');
         await renderAdminCreatedAccounts();
-        await showManagedStudentsInSection({ ...payload, section_id: result.section_id });
     } catch (error) {
         errorBox.textContent = error.message;
     }

@@ -2234,7 +2234,7 @@ const firstLoginSetupRequired = Number(userData.role_id) === 3
     && (studentProfileNeedsSetup || userData.email?.endsWith('@accounts.tcc.invalid'));
 
 if(Number(userData.role_id) === 3 && (onboardingRequired || passwordChangeRequired || firstLoginSetupRequired)){
-    showAlert('success', 'Account Setup Required', 'Complete your email, enrollment information, and permanent password.');
+    showAlert('success', 'Account Setup Required', 'Complete your name, gender, enrollment, email, and permanent password.');
     const activeSession = data.session || (await supabaseClient.auth.getSession()).data.session;
     if (activeSession?.access_token && activeSession?.refresh_token) {
         try {
