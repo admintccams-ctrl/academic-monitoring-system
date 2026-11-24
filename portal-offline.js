@@ -1150,6 +1150,7 @@
             userId,
             log_id: log.log_id || log.id || null,
             activity: log.activity || 'System activity',
+            actor_email: log.actor_email || null,
             created_at: log.created_at || new Date().toISOString()
         }));
         await adminStoreRequest(adminSystemLogStoreName, 'readwrite', store => {

@@ -2708,6 +2708,10 @@ onchange="loadSubjectsForTeacherAssign()">
                             Activity
                         </th>
 
+                        <th>
+                            Performed By
+                        </th>
+
                         <th width="220">
                             Date & Time
                         </th>
@@ -2720,7 +2724,7 @@ onchange="loadSubjectsForTeacherAssign()">
 
                     <tr>
 
-                        <td colspan="3">
+                        <td colspan="4">
 
                             Loading logs...
 
@@ -2960,7 +2964,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=189"></script>
+    <script src="portal-offline.js?v=190"></script>
     <script>
 
         const SUPABASE_URL =
@@ -13107,7 +13111,7 @@ const SYSTEM_LOG_CATEGORY_TERMS = {
 };
 
 function matchesSystemLogFilters(log, search, category) {
-    const text = `${log.activity || ''} ${log.log_id || ''}`.toLowerCase();
+    const text = `${log.activity || ''} ${log.log_id || ''} ${log.actor_email || ''}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     const terms = SYSTEM_LOG_CATEGORY_TERMS[category] || [];
     return !terms.length || terms.some(term => text.includes(term));
@@ -13116,7 +13120,7 @@ function matchesSystemLogFilters(log, search, category) {
 function createSystemLogsQuery(search, category, start, end) {
     let query = supabaseClient
         .from('activity_logs')
-        .select('log_id, activity, created_at');
+        .select('log_id, activity, actor_email, created_at');
 
     const categoryTerms = SYSTEM_LOG_CATEGORY_TERMS[category] || [];
     if (categoryTerms.length) {
@@ -13321,7 +13325,7 @@ async function prepareSystemLogsOffline(isAutomatic = false) {
             if (!navigator.onLine) throw new Error('Connection lost. Some logs may already be available offline.');
             const { data, error } = await supabaseClient
                 .from('activity_logs')
-                .select('log_id, activity, created_at')
+                .select('log_id, activity, actor_email, created_at')
                 .gt('log_id', lastLogId)
                 .order('log_id', { ascending: true })
                 .range(0, SYSTEM_LOG_PAGE_SIZE - 1);
@@ -13437,7 +13441,7 @@ function renderActivityLogs(logs, append = false) {
 
         <tr>
 
-            <td colspan="3">
+            <td colspan="4">
 
                 No activity logs found
 
@@ -13459,6 +13463,7 @@ function renderActivityLogs(logs, append = false) {
         const values = [
             log.log_id || 'Pending',
             log.activity || '',
+            log.actor_email || 'Not recorded',
             new Date(log.created_at || Date.now()).toLocaleString()
         ];
         values.forEach(value => {
@@ -13486,7 +13491,7 @@ async function loadSystemLogs() {
     systemLogsLoading = false;
     systemLogsCachedResults = null;
     loadOlderButton.style.display = 'none';
-    table.innerHTML = `<tr><td colspan="3">Searching ${search || category ? 'matching' : 'recent'} logs...</td></tr>`;
+    table.innerHTML = `<tr><td colspan="4">Searching ${search || category ? 'matching' : 'recent'} logs...</td></tr>`;
 
     if (!navigator.onLine && typeof window.getCachedSystemLogs === 'function') {
         try {
@@ -13541,7 +13546,7 @@ async function loadSystemLogs() {
         }
         const row = table.insertRow();
         const cell = row.insertCell();
-        cell.colSpan = 3;
+        cell.colSpan = 4;
         cell.textContent = 'Failed loading logs';
     }
 }
