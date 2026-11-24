@@ -1358,6 +1358,9 @@ onclick="openAboutModal()">
                             <div class="input-group password-field">
                                 <label for="forgotConfirmPassword">Confirm New Password</label>
                                 <input type="password" id="forgotConfirmPassword" autocomplete="new-password" placeholder="Enter the new password again">
+                                <button type="button" class="password-toggle" onclick="togglePasswordById('forgotConfirmPassword', this)" aria-label="Toggle password visibility">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
                             </div>
 
                             <div class="submit-row">

@@ -182,6 +182,29 @@
             (result.data||[]).forEach(section=>sectionSelect.add(new Option(section.section_name,section.section_id)));
         }
 
+        function setupPasswordToggle(input){
+            if(!input||input.dataset.eyeAdded==='true') return;
+            input.dataset.eyeAdded='true';
+            const wrap=document.createElement('div');
+            wrap.className='password-input-wrap';
+            input.parentNode.insertBefore(wrap,input);
+            wrap.appendChild(input);
+            const button=document.createElement('button');
+            button.type='button';
+            button.className='password-toggle';
+            button.setAttribute('aria-label','Show password');
+            button.innerHTML='<i class="fa-solid fa-eye"></i>';
+            button.addEventListener('click',()=>{
+                const show=input.type==='password';
+                input.type=show?'text':'password';
+                button.setAttribute('aria-label',show?'Hide password':'Show password');
+                button.innerHTML=show?' <i class="fa-solid fa-eye-slash"></i>':'<i class="fa-solid fa-eye"></i>';
+            });
+            wrap.appendChild(button);
+        }
+
+        document.querySelectorAll('#passwordFields input[type="password"],#forgotPasswordFields input[type="password"]').forEach(setupPasswordToggle);
+
         function showError(error){errorBox.textContent=error?.message||'Unable to load the form. Please retry.';}
 
         form.addEventListener('submit',async event=>{

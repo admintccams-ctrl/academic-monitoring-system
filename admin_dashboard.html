@@ -2914,7 +2914,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=182"></script>
+    <script src="portal-offline.js?v=183"></script>
     <script>
 
         const SUPABASE_URL =
@@ -8338,7 +8338,7 @@ function renderStudentChoiceGroups(students, checkboxClass, changeHandler = '') 
         ).map(student => `<tr data-student-search="${`${student.student_number || ''} ${formatName(student.first_name, student.middle_initial, student.last_name)}`.toLowerCase()}">
             <td><input class="${checkboxClass}" type="checkbox" style="width:20px;height:20px;" value="${student.student_id}" data-student-number="${student.pendingCreate ? student.student_number : ''}" ${changeHandler ? `onchange="${changeHandler}"` : ''}></td>
             <td>${student.student_number || ''}</td>
-            <td>${formatName(student.first_name, student.middle_initial, student.last_name)}${student.pendingCreate ? ' (account waiting to sync)' : ''}</td>
+            <td>${student.pendingCreate ? 'Not logged in yet (account waiting to sync)' : (student.onboardingRequired || (!String(student.first_name || '').trim() && !String(student.last_name || '').trim()) ? 'Not logged in yet (pending first login)' : formatName(student.first_name, student.middle_initial, student.last_name))}</td>
         </tr>`).join('')}
     `).join('');
 }
@@ -8837,11 +8837,13 @@ async function loadStudentsBySection() {
             `${first.last_name || ''}, ${first.first_name || ''}`.localeCompare(`${second.last_name || ''}, ${second.first_name || ''}`, undefined, { sensitivity: 'base' })
         ).forEach(student => {
 
-        const fullName = formatName(
-            student.first_name,
-            student.middle_initial,
-            student.last_name
-        );
+        const hasPendingSetup = !student.pending
+            && (!String(student.first_name || '').trim()
+                || !String(student.last_name || '').trim()
+                || Boolean(student.users?.onboarding_required));
+        const fullName = hasPendingSetup
+            ? 'Not logged in yet'
+            : formatName(student.first_name, student.middle_initial, student.last_name);
 
         const studentActions = student.pending
             ? `<div>
@@ -8880,7 +8882,7 @@ async function loadStudentsBySection() {
                 ${fullName}
             </td>
 
-            <td>${student.pending || student.pendingEdit || student.pendingAssignment ? 'Waiting to sync' : (student.users?.email?.endsWith('@accounts.tcc.invalid') ? 'Email not added yet' : (student.users?.email || 'N/A'))}</td>
+            <td>${student.pending || student.pendingEdit || student.pendingAssignment ? 'Waiting to sync' : (hasPendingSetup ? 'Pending first login' : (student.users?.email?.endsWith('@accounts.tcc.invalid') ? 'Email not added yet' : (student.users?.email || 'N/A')))}</td>
 
             <td>
 
@@ -9326,7 +9328,9 @@ async function renderAdminCreatedAccounts() {
                     year: item.role !== 'student' || !enrollment.sectionId ? '—' : enrollment.year,
                     section: item.role !== 'student' ? '—' : enrollment.name,
                     password: item.temporaryPassword || (item.failed ? 'Not created' : ''),
-                    status: item.status || (teacherEdit ? 'Edit waiting for connection' : 'Created')
+                    status: item.status || (item.role === 'student' && student && (!String(student.first_name || '').trim() || !String(student.last_name || '').trim() || Boolean(student.users?.onboarding_required))
+                        ? 'Pending first login'
+                        : teacherEdit ? 'Edit waiting for connection' : 'Created')
                 };
             }).filter(Boolean),
             ...queuedTeacherDeletions.map(item => ({
