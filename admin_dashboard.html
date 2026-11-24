@@ -9278,7 +9278,7 @@ async function renderAdminCreatedAccounts() {
                 failed: Boolean(item.lastError),
                 role: item.role,
                 name: formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name)
-                    || (item.role === 'teacher' ? 'Not logged in yet (pending first login)' : 'Not logged in yet'),
+                    || 'Not logged in yet',
                 firstName: item.payload.first_name,
                 middleInitial: item.payload.middle_initial,
                 lastName: item.payload.last_name,
@@ -9344,7 +9344,7 @@ async function renderAdminCreatedAccounts() {
                     failed: Boolean(item.failed),
                     name: item.role === 'student'
                         ? formatName(studentFirstName, studentNameSource?.middle_initial, studentLastName) || 'Not logged in yet'
-                        : formatName(teacherFirstName, teacherPayload?.middle_initial, teacherLastName) || 'Not logged in yet (pending first login)',
+                        : formatName(teacherFirstName, teacherPayload?.middle_initial, teacherLastName) || 'Not logged in yet',
                     firstName: teacherPayload.first_name,
                     middleInitial: teacherPayload.middle_initial,
                     lastName: teacherPayload.last_name,
@@ -11359,7 +11359,7 @@ async function loadTeachersManagement() {
         const teacherUser = Array.isArray(teacher.users) ? teacher.users[0] : teacher.users;
         const name = formatName(teacher.first_name, teacher.middle_initial, teacher.last_name)
             || (teacher.pendingCreate || teacherUser?.onboarding_required
-                ? 'Not logged in yet (pending first login)'
+                ? 'Not logged in yet'
                 : 'Name not set');
         [teacher.teacher_number, name, teacher.pendingCreate
             ? teacher.lastError ? `Needs attention: ${teacher.lastError}` : teacher.processing ? 'Creating' : 'Waiting to sync'
