@@ -43,9 +43,21 @@
             <div><h1>Choose Your Password</h1><p>Academic Monitoring System · Talisay City College</p></div>
         </header>
         <section class="setup-content">
-            <p>Your administrator created your teacher account. Set a new password to finish setup.</p>
+            <p>Your administrator created your teacher account. Add your name, Gmail address, and permanent password to finish setup.</p>
             <form id="teacherSetupForm">
                 <div class="form-grid" id="teacherSetupFields">
+                <div class="field" id="firstNameField" hidden>
+                    <label for="teacherFirstName">First name</label>
+                    <input id="teacherFirstName" type="text" autocomplete="given-name">
+                </div>
+                <div class="field" id="middleInitialField" hidden>
+                    <label for="teacherMiddleInitial">Middle initial (optional)</label>
+                    <input id="teacherMiddleInitial" type="text" maxlength="10" autocomplete="additional-name">
+                </div>
+                <div class="field" id="lastNameField" hidden>
+                    <label for="teacherLastName">Last name</label>
+                    <input id="teacherLastName" type="text" autocomplete="family-name">
+                </div>
                 <div class="field full" id="emailField" hidden>
                     <label for="teacherEmail">Gmail address</label>
                     <input id="teacherEmail" type="email" autocomplete="email">
@@ -106,10 +118,16 @@
                     ? false
                     : Boolean((userData.onboarding_required||session.user.user_metadata?.onboarding_required)&&!passwordChangeRequired);
             if(firstLoginMode){
+                document.getElementById('firstNameField').hidden=false;
+                document.getElementById('middleInitialField').hidden=false;
+                document.getElementById('lastNameField').hidden=false;
                 document.getElementById('emailField').hidden=false;
+                document.getElementById('teacherFirstName').required=true;
+                document.getElementById('teacherLastName').required=true;
                 document.getElementById('teacherEmail').required=true;
-                document.querySelector('.setup-header h1').textContent='Add Your Gmail and Password';
-                document.querySelector('.setup-content>p').textContent='Enter your Gmail address and choose a permanent password to finish account setup.';
+                document.querySelector('.setup-header h1').textContent='Complete Your Teacher Profile';
+                document.querySelector('.setup-content>p').textContent='Enter your name, Gmail address, and permanent password to finish setting up your account.';
+                saveButton.textContent='Complete Setup';
             }else{
                 document.querySelector('.setup-header h1').textContent='Choose a New Password';
                 document.querySelector('.setup-content>p').textContent='Your administrator reset your password. Choose a new password to continue.';
@@ -140,6 +158,9 @@
                     headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${session.access_token}`},
                     body:JSON.stringify({
                         action,
+                        first_name:firstLoginMode?document.getElementById('teacherFirstName').value.trim():undefined,
+                        middle_initial:firstLoginMode?document.getElementById('teacherMiddleInitial').value.trim():undefined,
+                        last_name:firstLoginMode?document.getElementById('teacherLastName').value.trim():undefined,
                         email:firstLoginMode?document.getElementById('teacherEmail').value.trim():undefined,
                         password
                     })
@@ -152,7 +173,7 @@
             }catch(error){
                 errorBox.textContent=error.message;
                 saveButton.disabled=false;
-                saveButton.textContent='Save Password';
+                saveButton.textContent=firstLoginMode?'Complete Setup':'Save Password';
             }
         });
 

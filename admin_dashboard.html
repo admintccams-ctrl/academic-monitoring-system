@@ -2479,18 +2479,15 @@ onchange="loadSubjectsForTeacherAssign()">
             <button class="close-btn" onclick="closeModal('createTeacherModal')">X</button>
         </div>
         <div class="modal-body">
-            <p>Enter the teacher's ID and name. A temporary password will be generated for first login.</p>
+            <p>Enter the Teacher ID. A temporary password will be generated for first login.</p>
             <input id="createTeacherNumber" type="text" placeholder="Teacher ID" autocomplete="off">
-            <input id="createTeacherFirstName" type="text" placeholder="First name">
-            <input id="createTeacherMiddleInitial" type="text" placeholder="Middle initial (optional)">
-            <input id="createTeacherLastName" type="text" placeholder="Last name">
             <button class="btn" onclick="createTeacherAccount()">Create Account</button>
             <div id="createdTeacherCredentials" style="display:none;padding:14px;background:#f1f5f9;border-radius:8px;overflow-wrap:anywhere;">
                 <strong>Give these credentials to the teacher</strong>
                 <p>Teacher ID: <span id="createdTeacherLoginId"></span></p>
                 <p>Temporary password: <code id="createdTeacherPassword"></code></p>
                 <button class="btn" onclick="copyCreatedTeacherPassword()">Copy Password</button>
-                <p>The teacher will choose a new password at first login.</p>
+                <p>At first login, the teacher will enter their name and Gmail address and choose a permanent password.</p>
             </div>
             <p id="createTeacherError" class="danger-text"></p>
         </div>
@@ -7370,7 +7367,7 @@ async function loadSubjectsForDelete() {
                 && !visibleTeachers.some(teacher => String(teacher.teacher_number) === String(item.payload.teacher_number)))
                 .forEach(item => {
                     select.add(new Option(
-                        `${formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name)} (${item.payload.teacher_number}, waiting to sync)`,
+                        `${formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name) || 'Name pending first login'} (${item.payload.teacher_number}, waiting to sync)`,
                         `local:${item.operationId}`
                     ));
                 });
@@ -9165,7 +9162,7 @@ async function renderAdminCreatedAccounts() {
             ]);
             const teacherResult = completedTeacherNumbers.length
                 ? await supabaseClient.from('teachers')
-                    .select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email)')
+                    .select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email, onboarding_required, force_password_change)')
                     .in('teacher_number', completedTeacherNumbers)
                 : { data: [] };
             (sectionResult.data || []).forEach(section => liveSections.set(String(section.section_id), section));
@@ -9175,7 +9172,11 @@ async function renderAdminCreatedAccounts() {
             } else {
                 console.warn('Unable to verify saved student accounts against the live roster.', studentResult.error);
             }
-            (teacherResult.data || []).forEach(teacher => liveTeachers.set(String(teacher.teacher_number), teacher));
+            if (teacherResult.error) {
+                console.warn('Unable to verify saved teacher accounts against the live roster.', teacherResult.error);
+            } else {
+                (teacherResult.data || []).forEach(teacher => liveTeachers.set(String(teacher.teacher_number), teacher));
+            }
         }
         const deletedSavedStudentNumbers = liveStudentLookupSucceeded
             ? completed.filter(item => item.role === 'student' && !liveStudents.has(String(item.accountId)))
@@ -9264,7 +9265,8 @@ async function renderAdminCreatedAccounts() {
                 processing: Boolean(item.processing),
                 failed: Boolean(item.lastError),
                 role: item.role,
-                name: formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name),
+                name: formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name)
+                    || (item.role === 'teacher' ? 'Name pending first login' : 'Not logged in yet'),
                 firstName: item.payload.first_name,
                 middleInitial: item.payload.middle_initial,
                 lastName: item.payload.last_name,
@@ -9308,7 +9310,13 @@ async function renderAdminCreatedAccounts() {
                     ? queued.filter(operation => operation.role === 'teacher' && operation.action === 'admin-edit'
                         && String(operation.payload.teacher_id) === String(teacher?.teacher_id || item.payload.teacher_id || item.payload.profile_id || '')).at(-1)
                     : null;
-                const teacherPayload = teacherEdit?.payload || teacher || item.payload;
+                const teacherProfile = teacher || cachedTeacher;
+                const teacherPayload = teacherEdit?.payload || teacherProfile || item.payload;
+                const teacherFirstName = String(teacherPayload?.first_name || '').trim();
+                const teacherLastName = String(teacherPayload?.last_name || '').trim();
+                const teacherUser = Array.isArray(teacherProfile?.users) ? teacherProfile.users[0] : teacherProfile?.users;
+                const teacherNeedsSetup = Boolean(teacherProfile
+                    && (!teacherFirstName || !teacherLastName || teacherUser?.onboarding_required));
                 if (item.role === 'student' && targetedByPendingBulkCleanup(
                     item.accountId, studentId, initialSectionId, item.payload.year_level
                 )) return null;
@@ -9324,7 +9332,7 @@ async function renderAdminCreatedAccounts() {
                     failed: Boolean(item.failed),
                     name: item.role === 'student'
                         ? formatName(studentFirstName, studentNameSource?.middle_initial, studentLastName) || 'Not logged in yet'
-                        : formatName(teacherPayload.first_name, teacherPayload.middle_initial, teacherPayload.last_name),
+                        : formatName(teacherFirstName, teacherPayload?.middle_initial, teacherLastName) || 'Name pending first login',
                     firstName: teacherPayload.first_name,
                     middleInitial: teacherPayload.middle_initial,
                     lastName: teacherPayload.last_name,
@@ -9338,9 +9346,15 @@ async function renderAdminCreatedAccounts() {
                     password: item.temporaryPassword || (item.failed ? 'Not created' : ''),
                     status: item.role === 'student' && student
                         ? studentNeedsSetup ? 'Pending first login' : 'Setup complete'
-                        : item.status || (item.role === 'student' && studentNeedsSetup
-                            ? 'Pending first login'
-                            : teacherEdit ? 'Edit waiting for connection' : 'Created')
+                        : item.role === 'teacher' && teacherEdit
+                            ? 'Edit waiting for connection'
+                            : item.role === 'teacher' && teacher
+                                ? teacherNeedsSetup
+                                    ? 'Pending first login'
+                                    : teacherUser?.force_password_change ? 'Password change required' : 'Setup complete'
+                                : item.status || (item.role === 'student' && studentNeedsSetup
+                                    ? 'Pending first login'
+                                    : 'Created')
                 };
             }).filter(Boolean),
             ...queuedTeacherDeletions.map(item => ({
@@ -10174,7 +10188,11 @@ window.addEventListener('admin-account-data-changed', () => {
     }
 });
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void renderAdminCreatedAccounts();
+    if (document.hidden) return;
+    void renderAdminCreatedAccounts();
+    if (document.getElementById('teacherSection')?.classList.contains('active-section')) {
+        void loadTeachersManagement();
+    }
 });
 window.addEventListener('admin-password-reset-data-changed', () => {
     void renderAdminPasswordResets();
@@ -11282,7 +11300,7 @@ async function loadTeachersManagement() {
                 });
             });
     } else {
-        const result = await supabaseClient.from('teachers').select(`*, users(email)`).order('last_name');
+        const result = await supabaseClient.from('teachers').select(`*, users(email, onboarding_required)`).order('last_name');
         if (result.error) {
             console.log(result.error);
             table.innerHTML = '<tr><td colspan="4">Failed loading teachers</td></tr>';
@@ -11321,7 +11339,9 @@ async function loadTeachersManagement() {
 
     data.forEach(teacher => {
         const row = table.insertRow();
-        const name = formatName(teacher.first_name, teacher.middle_initial, teacher.last_name);
+        const teacherUser = Array.isArray(teacher.users) ? teacher.users[0] : teacher.users;
+        const name = formatName(teacher.first_name, teacher.middle_initial, teacher.last_name)
+            || (teacher.pendingCreate || teacherUser?.onboarding_required ? 'Name pending first login' : 'Name not set');
         [teacher.teacher_number, name, teacher.pendingCreate
             ? teacher.lastError ? `Needs attention: ${teacher.lastError}` : teacher.processing ? 'Creating' : 'Waiting to sync'
             : ((teacher.users?.email || teacher.users?.[0]?.email)?.endsWith('@accounts.tcc.invalid')
@@ -11410,8 +11430,7 @@ let queuedTeacherCreateEditOperationId = null;
 
 function openCreateTeacherModal() {
     queuedTeacherCreateEditOperationId = null;
-    ['createTeacherNumber', 'createTeacherFirstName', 'createTeacherMiddleInitial', 'createTeacherLastName']
-        .forEach(id => document.getElementById(id).value = '');
+    document.getElementById('createTeacherNumber').value = '';
     document.getElementById('createTeacherError').textContent = '';
     document.getElementById('createdTeacherCredentials').style.display = 'none';
     openModal('createTeacherModal');
@@ -11422,11 +11441,11 @@ async function createTeacherAccount() {
     errorBox.textContent = '';
     try {
         const payload = {
-            teacher_number: document.getElementById('createTeacherNumber').value.trim(),
-            first_name: document.getElementById('createTeacherFirstName').value.trim(),
-            middle_initial: document.getElementById('createTeacherMiddleInitial').value.trim(),
-            last_name: document.getElementById('createTeacherLastName').value.trim()
+            teacher_number: document.getElementById('createTeacherNumber').value.trim()
         };
+        if (!/^[A-Za-z0-9-]{1,40}$/.test(payload.teacher_number)) {
+            throw new Error('Enter a valid Teacher ID.');
+        }
         if (queuedTeacherCreateEditOperationId) {
             await window.updateQueuedAdminTeacherCreation(supabaseClient, queuedTeacherCreateEditOperationId, payload);
             queuedTeacherCreateEditOperationId = null;
@@ -11452,8 +11471,7 @@ async function createTeacherAccount() {
             throw error;
         }
         if (result.queued) {
-            ['createTeacherNumber', 'createTeacherFirstName', 'createTeacherMiddleInitial', 'createTeacherLastName']
-                .forEach(id => document.getElementById(id).value = '');
+            document.getElementById('createTeacherNumber').value = '';
             document.getElementById('createdTeacherCredentials').style.display = 'none';
             await renderAdminCreatedAccounts();
             if (document.getElementById('teacherSection')?.classList.contains('active-section')) {
@@ -11462,8 +11480,7 @@ async function createTeacherAccount() {
             showAlert('success', 'Teacher Account Queued', 'The teacher account is saved on this device and will be created when you reconnect.');
             return;
         }
-        ['createTeacherNumber', 'createTeacherFirstName', 'createTeacherMiddleInitial', 'createTeacherLastName']
-            .forEach(id => document.getElementById(id).value = '');
+        document.getElementById('createTeacherNumber').value = '';
         document.getElementById('createdTeacherLoginId').textContent = result.teacher_number;
         document.getElementById('createdTeacherPassword').textContent = result.temporary_password;
         document.getElementById('createdTeacherCredentials').style.display = 'block';
@@ -11488,9 +11505,6 @@ async function openEditQueuedTeacherAccount(operationId) {
         }
         queuedTeacherCreateEditOperationId = operationId;
         document.getElementById('createTeacherNumber').value = item.payload.teacher_number || '';
-        document.getElementById('createTeacherFirstName').value = item.payload.first_name || '';
-        document.getElementById('createTeacherMiddleInitial').value = item.payload.middle_initial || '';
-        document.getElementById('createTeacherLastName').value = item.payload.last_name || '';
         document.getElementById('createdTeacherCredentials').style.display = 'none';
         openModal('createTeacherModal');
     } catch (error) {

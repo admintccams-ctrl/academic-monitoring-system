@@ -2198,7 +2198,7 @@ const passwordChangeRequired = Boolean(userData.force_password_change || data.us
 if (Number(userData.role_id) === 2 && (onboardingRequired || passwordChangeRequired)) {
     const teacherFirstLoginSetup = onboardingRequired && !passwordChangeRequired;
     showAlert('success', 'Account Setup Required', teacherFirstLoginSetup
-        ? 'Add your Gmail and choose a permanent password to finish setting up your teacher account.'
+        ? 'Enter your name and Gmail address, then choose a permanent password to finish setting up your teacher account.'
         : 'Choose a new password to continue.');
     const activeSession = data.session || (await supabaseClient.auth.getSession()).data.session;
     if (activeSession?.access_token && activeSession?.refresh_token) {
