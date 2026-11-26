@@ -1103,7 +1103,7 @@
                 client.from('semesters').select('semester_id, semester_name, is_active').order('semester_id'),
                 client.from('subjects').select('subject_id, subject_code, subject_name, major_id, semester_id, year_level, semesters(semester_name)').order('subject_name'),
                 client.from('teacher_subject_assignments').select('assignment_id, teacher_id, subject_id, teachers(first_name,middle_initial,last_name,teacher_number), subjects(subject_name,subject_code,major_id,year_level)').order('assignment_id'),
-                client.from('teachers').select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email)').order('last_name'),
+                client.from('teachers').select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email, onboarding_required)').order('last_name'),
                 client.from('teacher_section_assignments').select('teacher_section_id, assignment_id, section_id, sections(section_name)')
             ]);
             const lookupError = departmentsResult.error || majorsResult.error || sectionsResult.error || semestersResult.error || subjectsResult.error || teacherAssignmentsResult.error || teachersResult.error || teacherSectionsResult.error;
@@ -1167,7 +1167,7 @@
         userId = userId || await getUserId(client);
         if (!userId) return;
         const { data: teachers, error } = await client.from('teachers')
-            .select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email)')
+            .select('teacher_id, user_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email, onboarding_required)')
             .order('last_name');
         if (error) throw error;
         const lookups = await getAdminAccountLookups(client, userId);

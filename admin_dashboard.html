@@ -2786,9 +2786,14 @@ onchange="loadSubjectsForTeacherAssign()">
     </div>
 
     <div class="table-section">
-        <div class="section-header">
-            <h2>Archived Accounts</h2>
-            <p>Restoring an account reactivates its original login and password.</p>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
+            <div class="section-header" style="margin-bottom:0;">
+                <h2>Archived Accounts</h2>
+                <p>Restoring an account reactivates its original login and password.</p>
+            </div>
+            <button type="button" id="clearAccountArchiveButton" class="btn reject-btn" onclick="clearAccountArchive()" disabled>
+                Clear Archive
+            </button>
         </div>
         <p id="accountArchiveStatus" role="status" aria-live="polite" style="margin-bottom:16px;color:#475569;font-size:14px;">
             Select Account Archive to load archived accounts.
@@ -3023,7 +3028,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=192"></script>
+    <script src="portal-offline.js?v=193"></script>
     <script>
 
         const SUPABASE_URL =
@@ -7439,6 +7444,17 @@ async function loadSubjectsForDelete() {
 
         }
 
+        function isTeacherReadyForAssignment(teacher) {
+            const firstName = String(teacher.first_name || '').trim();
+            const lastName = String(teacher.last_name || '').trim();
+            const relatedUser = Array.isArray(teacher.users) ? teacher.users[0] : teacher.users;
+            const email = String(relatedUser?.email || '').trim().toLowerCase();
+            return Boolean(firstName && lastName && relatedUser
+                && relatedUser.onboarding_required === false
+                && email
+                && !email.endsWith('@accounts.tcc.invalid'));
+        }
+
         async function loadTeachersForAssign() {
 
             const select =
@@ -7459,31 +7475,23 @@ async function loadSubjectsForDelete() {
                 const offlineRecords = await getAdminExplorerRecords();
                 data = offlineRecords.lookups?.teachers || [];
             } else {
-                const result = await supabaseClient.from('teachers').select('*').order('first_name');
+                const result = await supabaseClient.from('teachers')
+                    .select('teacher_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email, onboarding_required)')
+                    .order('first_name');
                 if (result.error) { console.log(result.error); return; }
                 data = result.data || [];
             }
             const { queued: accountQueue = [] } = await window.getAdminAccountData(supabaseClient);
             const deletedTeacherIds = new Set(accountQueue.filter(item => item.role === 'teacher' && item.action === 'admin-delete')
                 .map(item => String(item.payload.teacher_id)));
-            const visibleTeachers = data.filter(teacher => !deletedTeacherIds.has(String(teacher.teacher_id)));
+            const visibleTeachers = data.filter(teacher => isTeacherReadyForAssignment(teacher)
+                && !deletedTeacherIds.has(String(teacher.teacher_id)));
             visibleTeachers.forEach(teacher => {
                 select.add(new Option(
                     formatName(teacher.first_name, teacher.middle_initial, teacher.last_name),
                     String(teacher.teacher_id)
                 ));
             });
-            accountQueue.filter(item => item.role === 'teacher'
-                && (item.action || 'admin-create') === 'admin-create'
-                && !item.lastError
-                && !visibleTeachers.some(teacher => String(teacher.teacher_number) === String(item.payload.teacher_number)))
-                .forEach(item => {
-                    select.add(new Option(
-                        `${formatName(item.payload.first_name, item.payload.middle_initial, item.payload.last_name) || 'Name pending first login'} (${item.payload.teacher_number}, waiting to sync)`,
-                        `local:${item.operationId}`
-                    ));
-                });
-
         }
 
         /* =========================================
@@ -7835,12 +7843,14 @@ async function assignTeacherToSubject() {
                 const offlineRecords = await getAdminExplorerRecords();
                 data = offlineRecords.lookups?.teachers || [];
             } else {
-                const result = await supabaseClient.from('teachers').select('*').order('first_name');
+                const result = await supabaseClient.from('teachers')
+                    .select('teacher_id, teacher_number, first_name, middle_initial, last_name, users!teachers_user_id_fkey(email, onboarding_required)')
+                    .order('first_name');
                 if (result.error) { console.log(result.error); return; }
                 data = result.data || [];
             }
 
-            data.forEach(teacher => {
+            data.filter(isTeacherReadyForAssignment).forEach(teacher => {
 
                 select.innerHTML += `
         
@@ -9261,6 +9271,7 @@ async function loadAccountArchive() {
     try {
         const result = await callAccountArchiveFunction('list');
         const entries = Array.isArray(result.data) ? result.data : [];
+        document.getElementById('clearAccountArchiveButton').disabled = entries.length === 0;
         table.replaceChildren();
         if (!entries.length) {
             table.innerHTML = '<tr><td colspan="6">There are no archived accounts.</td></tr>';
@@ -9297,6 +9308,37 @@ async function loadAccountArchive() {
         table.innerHTML = '<tr><td colspan="6">Unable to load archived accounts.</td></tr>';
         status.textContent = error.message || 'Unable to load archived accounts.';
     }
+}
+
+function clearAccountArchive() {
+    showConfirmModal(
+        'Permanently Clear Account Archive',
+        'Permanently delete every account that is still archived, including its original login and saved records? This cannot be undone, and these accounts will no longer be restorable.',
+        async () => {
+            const button = document.getElementById('clearAccountArchiveButton');
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'Clearing...';
+            }
+            try {
+                const result = await callAccountArchiveFunction('clear-all');
+                await loadAccountArchive();
+                if (result.failed) {
+                    showAlert(
+                        'warning',
+                        'Archive Partially Cleared',
+                        `${result.cleared} of ${result.total} archived account(s) were permanently deleted. ${result.failed} could not be cleared. ${result.failures?.[0]?.account_identifier ? `First failure: ${result.failures[0].account_identifier} — ${result.failures[0].error}` : ''}`
+                    );
+                } else {
+                    showAlert('success', 'Archive Cleared', `${result.cleared} archived account(s) and their original logins were permanently deleted.`);
+                }
+            } catch (error) {
+                showAlert('error', 'Could Not Clear Archive', error.message || 'Unable to permanently clear archived accounts.');
+            } finally {
+                if (button) button.textContent = 'Clear Archive';
+            }
+        }
+    );
 }
 
 function restoreArchivedAccount(entry) {
