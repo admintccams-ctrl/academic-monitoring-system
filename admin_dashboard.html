@@ -1155,6 +1155,11 @@ table td{
                 System Logs
             </a>
 
+            <a href="#" class="nav-link" onclick="showSection('accountArchiveSection',this)">
+                <i class="fa-solid fa-box-archive"></i>
+                Account Archive
+            </a>
+
             <a href="login.html" onclick="logoutAndRedirect(event, supabaseClient)">
                 <i class="fa-solid fa-right-from-bracket"></i>
                 Logout
@@ -2356,13 +2361,13 @@ onchange="loadSubjectsForTeacherAssign()">
 
         <div style="display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin:14px 0;">
             <p style="margin:0;">
-                <strong>Unassigned students:</strong> Permanently delete only student accounts with no section. Assigned students and all sections are kept.
+                <strong>Unassigned students:</strong> Archive only student accounts with no section so they can be restored. Assigned students and all sections are kept.
             </p>
             <button class="btn reject-btn" onclick="deleteAllUnassignedStudents()">Delete All Unassigned Students</button>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin:14px 0 0;">
             <p style="margin:0;">
-                <strong>Graduate sections:</strong> Permanently delete every section marked Graduate and the student accounts assigned to those sections. Other sections and students are kept.
+                <strong>Graduate sections:</strong> Archive student accounts in sections marked Graduate, then remove those sections. Archived accounts can be restored. Other sections and students are kept.
             </p>
             <button class="btn reject-btn" onclick="deleteAllGraduatedStudents()">Delete Graduate Sections and Students</button>
         </div>
@@ -2771,6 +2776,42 @@ onchange="loadSubjectsForTeacherAssign()">
 
 </div>
 
+<div class="content-section" id="accountArchiveSection">
+    <div class="topbar">
+        <div>
+            <h1>Account Archive</h1>
+            <p>Restore deleted student and teacher accounts with their saved academic data and original login.</p>
+        </div>
+    </div>
+
+    <div class="table-section">
+        <div class="section-header">
+            <h2>Archived Accounts</h2>
+            <p>Restoring an account reactivates its original login and password.</p>
+        </div>
+        <p id="accountArchiveStatus" role="status" aria-live="polite" style="margin-bottom:16px;color:#475569;font-size:14px;">
+            Select Account Archive to load archived accounts.
+        </p>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Account ID</th>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Archived On</th>
+                        <th>Archived By</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="accountArchiveTable">
+                    <tr><td colspan="6">No archived accounts loaded.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
     <!-- =========================================================
      TEACHER ASSIGNMENT MODAL
 ========================================================= -->
@@ -2931,6 +2972,9 @@ onchange="loadSubjectsForTeacherAssign()">
                     void loadTeachersManagement();
                 } else if (sectionId === 'logsSection') {
                     void loadSystemLogs();
+                } else if (sectionId === 'accountArchiveSection') {
+                    document.getElementById('accountArchiveStatus').textContent = 'Connect to the internet to view and restore archived accounts.';
+                    document.getElementById('accountArchiveTable').innerHTML = '<tr><td colspan="6">Archive access requires an internet connection.</td></tr>';
                 }
                 return;
             }
@@ -2956,6 +3000,12 @@ onchange="loadSubjectsForTeacherAssign()">
                 loadSystemLogs();
 
             }
+
+             if (sectionId === 'accountArchiveSection') {
+
+                 void loadAccountArchive();
+
+             }
 
             if (sectionId === 'departmentSection') {
 
@@ -9178,6 +9228,97 @@ async function callStudentAccountFunction(action, payload) {
     return result;
 }
 
+const ACCOUNT_ARCHIVE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/manage-account-archive`;
+
+async function callAccountArchiveFunction(action, payload = {}) {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) throw new Error('Please sign in again as an administrator.');
+
+    const response = await fetch(ACCOUNT_ARCHIVE_FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ action, ...payload })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Account archive operation failed.');
+    return result;
+}
+
+async function loadAccountArchive() {
+    const status = document.getElementById('accountArchiveStatus');
+    const table = document.getElementById('accountArchiveTable');
+    if (!status || !table) return;
+    status.textContent = 'Loading archived accounts...';
+    table.innerHTML = '<tr><td colspan="6">Loading archived accounts...</td></tr>';
+
+    try {
+        const result = await callAccountArchiveFunction('list');
+        const entries = Array.isArray(result.data) ? result.data : [];
+        table.replaceChildren();
+        if (!entries.length) {
+            table.innerHTML = '<tr><td colspan="6">There are no archived accounts.</td></tr>';
+            status.textContent = 'No archived accounts are currently available to restore.';
+            return;
+        }
+
+        entries.forEach(entry => {
+            const row = document.createElement('tr');
+            const values = [
+                entry.account_identifier,
+                entry.role === 'teacher' ? 'Teacher' : 'Student',
+                entry.display_name,
+                entry.archived_at ? new Date(entry.archived_at).toLocaleString() : 'Not recorded',
+                entry.archived_by_email || 'Not recorded'
+            ];
+            values.forEach(value => {
+                const cell = document.createElement('td');
+                cell.textContent = String(value || 'Not recorded');
+                row.appendChild(cell);
+            });
+            const actionCell = document.createElement('td');
+            const restoreButton = document.createElement('button');
+            restoreButton.type = 'button';
+            restoreButton.className = 'btn';
+            restoreButton.textContent = 'Restore';
+            restoreButton.addEventListener('click', () => restoreArchivedAccount(entry));
+            actionCell.appendChild(restoreButton);
+            row.appendChild(actionCell);
+            table.appendChild(row);
+        });
+        status.textContent = `${entries.length} archived account(s) available.`;
+    } catch (error) {
+        table.innerHTML = '<tr><td colspan="6">Unable to load archived accounts.</td></tr>';
+        status.textContent = error.message || 'Unable to load archived accounts.';
+    }
+}
+
+function restoreArchivedAccount(entry) {
+    showConfirmModal(
+        'Restore Account',
+        `Restore ${entry.role} account ${entry.account_identifier} (${entry.display_name})? The original login and password will be reactivated.`,
+        async () => {
+            try {
+                await callAccountArchiveFunction('restore', { archive_id: entry.archive_id });
+                await loadAccountArchive();
+                await loadDashboardCounts();
+                showAlert('success', 'Account Restored', `${entry.role} account ${entry.account_identifier} was restored with its saved records.`);
+                if (document.getElementById('studentSection')?.classList.contains('active-section')) {
+                    await refreshManageStudentsSelectors();
+                }
+                if (document.getElementById('teacherSection')?.classList.contains('active-section')) {
+                    await loadTeachersManagement();
+                }
+            } catch (error) {
+                showAlert('error', 'Restore Failed', error.message || 'Unable to restore this account.');
+            }
+        }
+    );
+}
+
 function renderAdminBulkAccountBatches(accountData, batches) {
     const queued = accountData?.queued || [];
     const completed = accountData?.completed || [];
@@ -9764,7 +9905,7 @@ async function downloadAdminBulkAccountBatch(batchId) {
                         : account.status === 'credentials-cleared'
                             ? `Created; ${account.error || 'temporary password cleared'}`
                             : account.status === 'account-removed'
-                                ? 'Account deleted; saved temporary password unavailable'
+                                ? 'Account archived; saved temporary password unavailable'
                                 : account.status === 'created'
                                     ? 'Created; temporary password unavailable'
                             : result?.status || account.error || 'Not created'
@@ -9806,7 +9947,7 @@ async function removeFailedAdminAccountRequest(operationId) {
 }
 
 function deleteCreatedStudentAccount(studentNumber, studentName = 'this student', userId = '', firstName = '', middleInitial = '', lastName = '') {
-    showConfirmModal('Delete Student Account', `Delete ${studentName} and remove the student profile, login, and related academic records? This cannot be undone.`, async () => {
+    showConfirmModal('Archive Student Account', `Archive ${studentName} and its related academic records? The account can be restored later from Account Archive.`, async () => {
         try {
             const result = await window.submitAdminAccountDeletion(
                 supabaseClient,
@@ -9818,16 +9959,16 @@ function deleteCreatedStudentAccount(studentNumber, studentName = 'this student'
                 SUPABASE_ANON_KEY
             );
             closeConfirmModal();
-            showAlert('success', result.queued ? 'Deletion Queued' : 'Student Deleted', result.queued
-                ? 'The account will be deleted when this device reconnects.'
-                : 'The student account and related records were deleted.');
+            showAlert('success', result.queued ? 'Archive Queued' : 'Student Archived', result.queued
+                ? 'The account will be archived when this device reconnects.'
+                : 'The student account and related records were archived and can be restored.');
             await renderAdminCreatedAccounts();
             await renderAdminStructureQueue();
             await loadStudentsBySection();
             if (!result.queued) await loadDashboardCounts();
         } catch (error) {
             closeConfirmModal();
-            showAlert('error', 'Could Not Delete Student', error.message || 'Unable to delete the student account.');
+            showAlert('error', 'Could Not Archive Student', error.message || 'Unable to archive the student account.');
         }
     });
 }
@@ -10975,7 +11116,7 @@ async function deleteStudent(
 
         'Delete Student',
 
-        'Delete this student account?',
+        'Archive this student account? It can be restored later from Account Archive.',
 
         async () => {
 
@@ -10997,9 +11138,9 @@ async function deleteStudent(
                     SUPABASE_ANON_KEY
                 );
                 closeConfirmModal();
-                showAlert('success', deletion.queued ? 'Deletion Queued' : 'Student Deleted', deletion.queued
-                    ? 'The account will be deleted when this device reconnects.'
-                    : 'The student account and related records were deleted.');
+                showAlert('success', deletion.queued ? 'Archive Queued' : 'Student Archived', deletion.queued
+                    ? 'The account will be archived when this device reconnects.'
+                    : 'The student account and related records were archived and can be restored.');
                 await renderAdminCreatedAccounts();
                 await loadStudentsBySection();
                 if (!deletion.queued) await loadDashboardCounts();
@@ -11350,7 +11491,7 @@ async function deleteStudent(
 function deleteAllUnassignedStudents() {
     confirmScopedStudentDeletion(
         'Delete All Unassigned Students',
-        'Permanently delete only student accounts with no assigned section. Students assigned to sections will be kept.',
+        'Archive only student accounts with no assigned section so they can be restored later. Students assigned to sections will be kept.',
         'unassigned'
     );
 }
@@ -11358,7 +11499,7 @@ function deleteAllUnassignedStudents() {
 function deleteAllGraduatedStudents() {
     confirmScopedStudentDeletion(
         'Delete Graduate Sections and Students',
-        'Permanently delete every Graduate section and all student accounts assigned to those sections. Other sections and their students will be kept.',
+        'Archive every student account in Graduate sections so they can be restored later, then remove those sections. Other sections and their students will be kept.',
         'graduated'
     );
 }
@@ -11366,10 +11507,12 @@ function deleteAllGraduatedStudents() {
 function confirmScopedStudentDeletion(title, description, scope) {
     showConfirmModal(title, description, async () => {
         const offlineMessage = scope === 'unassigned'
-            ? 'The deletion will run after reconnect and will target only accounts still unassigned at sync time. Continue?'
-            : 'The deletion will run after reconnect and will target Graduate sections and their students at sync time. Continue?';
-        showConfirmModal(navigator.onLine ? 'Final Warning' : 'Queue Cleanup Offline', navigator.onLine
-            ? 'This action cannot be undone. Continue?'
+            ? 'The archive will run after reconnect and will target only accounts still unassigned at sync time. Continue?'
+            : 'The archive will run after reconnect and will target Graduate sections and their students at sync time. Continue?';
+        showConfirmModal(navigator.onLine ? 'Confirm Archive' : 'Queue Cleanup Offline', navigator.onLine
+            ? (scope === 'graduated'
+                ? 'Student accounts can be restored from Account Archive. Graduate sections will be removed and are recreated only when a student is restored. Continue?'
+                : 'The student accounts can be restored from Account Archive. Continue?')
             : offlineMessage, async () => {
             try {
                 if (!navigator.onLine) {
@@ -11399,12 +11542,6 @@ function confirmScopedStudentDeletion(title, description, scope) {
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(result.error || 'Unable to delete the selected student accounts.');
 
-                const activity = scope === 'unassigned'
-                    ? `Deleted ${result.deleted} unassigned student account(s)`
-                    : `Deleted ${result.deleted} student account(s) from ${result.deleted_sections} Graduate section(s)`;
-                const { error: logError } = await supabaseClient.from('activity_logs').insert({ user_id: null, activity });
-                if (logError) console.warn('Bulk deletion succeeded, but the activity log could not be saved.', logError);
-
                 await window.saveAdminAccountLookups?.(supabaseClient);
                 await loadDashboardCounts();
                 if (document.getElementById('studentSection')?.classList.contains('active-section')) {
@@ -11417,9 +11554,9 @@ function confirmScopedStudentDeletion(title, description, scope) {
                 }
                 await renderAdminCreatedAccounts();
                 await renderAdminStructureQueue();
-                showAlert('success', scope === 'unassigned' ? 'Unassigned Students Deleted' : 'Graduate Sections Deleted', scope === 'unassigned'
-                    ? `${result.deleted} unassigned student account(s) were deleted. Sections were not changed.`
-                    : `${result.deleted} student account(s) and ${result.deleted_sections} Graduate section(s) were deleted.`);
+                showAlert('success', scope === 'unassigned' ? 'Unassigned Students Archived' : 'Graduate Students Archived', scope === 'unassigned'
+                    ? `${result.deleted} unassigned student account(s) were archived and can be restored. Sections were not changed.`
+                    : `${result.deleted} student account(s) were archived and ${result.deleted_sections} Graduate section(s) were removed.`);
             } catch (error) {
                 showAlert('error', 'Delete Failed', error.message || 'Unable to delete the selected student accounts.');
             }
@@ -12115,7 +12252,7 @@ async function deleteTeacher(
     teacherId,
     userId
 ) {
-    showConfirmModal('Delete Teacher', 'Delete this teacher account and remove its assignments and login? This cannot be undone.', async () => {
+    showConfirmModal('Archive Teacher', 'Archive this teacher account and its assignments? The account can be restored later from Account Archive.', async () => {
         try {
             const cachedTeacher = (await window.getAdminAccountLookups(supabaseClient))?.teachers
                 ?.find(teacher => String(teacher.teacher_id) === String(teacherId));
@@ -12127,9 +12264,9 @@ async function deleteTeacher(
                 SUPABASE_ANON_KEY
             );
             closeConfirmModal();
-            showAlert('success', result.queued ? 'Teacher Deletion Queued' : 'Teacher Deleted', result.queued
-                ? 'This teacher account will be deleted when the device reconnects.'
-                : 'The teacher account and its assignments were deleted.');
+            showAlert('success', result.queued ? 'Teacher Archive Queued' : 'Teacher Archived', result.queued
+                ? 'This teacher account will be archived when the device reconnects.'
+                : 'The teacher account and its assignments were archived and can be restored.');
             await loadTeachersManagement();
             await renderAdminCreatedAccounts();
             await renderAdminDeletions();
@@ -12137,7 +12274,7 @@ async function deleteTeacher(
             if (!result.queued) await window.refreshAdminTeacherLookups(supabaseClient);
         } catch (error) {
             closeConfirmModal();
-            showAlert('error', 'Delete Failed', error.message || 'Unable to delete teacher account.');
+            showAlert('error', 'Archive Failed', error.message || 'Unable to archive teacher account.');
         }
     });
 }
