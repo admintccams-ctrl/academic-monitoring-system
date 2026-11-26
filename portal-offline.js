@@ -365,7 +365,7 @@
                 const isAllowedOfflineAction = control.matches('button')
                     && /createStudentAccount|createTeacherAccount|saveStudentEdits|saveTeacherEdits|resetStudentPassword|resetTeacherPassword|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminDeletionResults|loadUnassignedStudents|loadGraduatedStudents|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|unassignSelectedStudentsFromSection|assignSelectedUnassignedStudents|addDepartment|addMajor|addSection|addSubject|setActiveSemester|deleteDepartment|deleteMajor|deleteSectionModalAction|deleteSubject|assignTeacherToSubject|removeTeacherAssignment|saveTeacherSection|closeCreateStudentModal|closeEditStudentModal|closeTeacherAssignmentModal|closeModal|closeDepartmentModal|closeMajorModal|closeSectionModal|closeSubjectModal|closeDeleteDepartmentModal|closeDeleteMajorModal|closeDeleteSectionModal|closeDeleteSubjectModal|closeTeacherAssignModal|closeTeacherSectionModal|loadEditStudentMajors|loadEditStudentSections|loadDepartmentDeleteOptions|loadMajorsForDelete|loadMajorsForDeleteSection|loadSectionsForDelete|loadMajorsForDeleteSubject|loadSubjectsForDelete/.test(control.getAttribute('onclick') || '');
                 const isAllowedOfflineStandaloneAction = control.matches('button')
-                    && /removeQueuedAdminAccount|removeFailedAdminAccountRequest|deleteAllLogs|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|resetTeacherPassword|openEditTeacherModal|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminPasswordResetResults|clearAdminDeletionResults|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|openUnassignSelectedStudentsModal/.test(control.getAttribute('onclick') || '');
+                    && /removeQueuedAdminAccount|removeFailedAdminAccountRequest|deleteAllLogs|deleteStudent|deleteTeacher|deleteCreatedStudentAccount|deleteCreatedTeacherAccount|deleteQueuedTeacherAccount|resetTeacherPassword|openEditTeacherModal|deleteAllUnassignedStudents|deleteAllGraduatedStudents|clearAdminCreatedAccounts|clearAdminBulkAccountBatches|clearAdminPasswordResetResults|clearAdminDeletionResults|transitionSelectedManageSection|unassignAllStudentsFromSelectedSection|openUnassignSelectedStudentsModal/.test(control.getAttribute('onclick') || '');
                 const isSemesterPicker = control.id === 'activeSemesterSelect';
                 const isExplorerBack = control.id === 'backButton';
                 const isStudentFilter = ['manageStudentYear', 'manageStudentDepartment', 'manageStudentMajor', 'manageStudentSection'].includes(control.id);
@@ -453,6 +453,76 @@
         const batches = await adminStoreRequest(adminResultsStoreName, 'readonly', store => store.getAll());
         return batches.filter(batch => batch.userId === userId && batch.recordType === 'bulk-batch')
             .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
+    }
+
+    async function clearAdminBulkAccountBatches(client, role) {
+        const userId = await getUserId(client);
+        if (!userId) throw new Error('Sign in again before clearing bulk account downloads.');
+        if (!['student', 'teacher'].includes(role)) throw new Error('Choose a valid account type.');
+
+        const database = await openDatabase();
+        const result = await new Promise((resolve, reject) => {
+            const transaction = database.transaction([adminResultsStoreName, adminQueueStoreName], 'readwrite');
+            const resultsStore = transaction.objectStore(adminResultsStoreName);
+            const queueStore = transaction.objectStore(adminQueueStoreName);
+            const resultsRequest = resultsStore.getAll();
+            const queueRequest = queueStore.getAll();
+            let resultsReady = false;
+            let queueReady = false;
+            let clearedBatchCount = 0;
+            let retainedBatchCount = 0;
+            const clearCompletedBatches = () => {
+                if (!resultsReady || !queueReady) return;
+                const userResults = resultsRequest.result.filter(item => item.userId === userId);
+                const queuedBatchIds = new Set(queueRequest.result
+                    .filter(item => item.userId === userId && item.bulkBatchId)
+                    .map(item => item.bulkBatchId));
+                const terminalStatuses = new Set([
+                    'created', 'failed', 'credentials-cleared', 'account-removed'
+                ]);
+                const batchesToClear = userResults.filter(item =>
+                    item.recordType === 'bulk-batch' && item.role === role
+                ).filter(batch => {
+                    const complete = batch.accounts.every(account => terminalStatuses.has(account.status));
+                    if (complete && !queuedBatchIds.has(batch.batchId)) return true;
+                    retainedBatchCount += 1;
+                    return false;
+                });
+                const batchIds = new Set(batchesToClear.map(batch => batch.batchId));
+                if (!batchIds.size) return;
+
+                userResults.filter(item => item.recordType === 'bulk-batch' && batchIds.has(item.batchId))
+                    .forEach(item => {
+                        resultsStore.delete(item.key);
+                        clearedBatchCount += 1;
+                    });
+            };
+            resultsRequest.onsuccess = () => {
+                resultsReady = true;
+                clearCompletedBatches();
+            };
+            queueRequest.onsuccess = () => {
+                queueReady = true;
+                clearCompletedBatches();
+            };
+            resultsRequest.onerror = () => reject(resultsRequest.error
+                || new Error('Unable to read saved bulk account batches.'));
+            queueRequest.onerror = () => reject(queueRequest.error
+                || new Error('Unable to read queued account requests.'));
+            transaction.oncomplete = () => resolve({ clearedBatchCount, retainedBatchCount });
+            transaction.onerror = () => reject(transaction.error
+                || new Error('Unable to clear saved bulk account downloads.'));
+            transaction.onabort = () => reject(transaction.error
+                || new Error('Clearing saved bulk account downloads was interrupted.'));
+        });
+
+        const remainingBatches = await getAdminBulkAccountBatches(client);
+        const retainedCount = remainingBatches.filter(batch => batch.role === role).length;
+        if (retainedCount !== result.retainedBatchCount) {
+            throw new Error('Clear verification failed: some bulk batches changed while clearing. Refresh and try again.');
+        }
+        window.dispatchEvent(new CustomEvent('admin-account-data-changed'));
+        return { clearedBatchCount: result.clearedBatchCount, retainedBatchCount: retainedCount };
     }
 
     async function queueTeacherOperation(client, type, payload, file = null) {
@@ -1972,6 +2042,7 @@
     window.createAdminBulkAccountBatch = createAdminBulkAccountBatch;
     window.updateAdminBulkAccountBatch = updateAdminBulkAccountBatch;
     window.getAdminBulkAccountBatches = getAdminBulkAccountBatches;
+    window.clearStoredAdminBulkAccountBatches = clearAdminBulkAccountBatches;
     window.discardAdminAccountResult = discardAdminAccountResult;
     window.submitAdminAccountDeletion = submitAdminAccountDeletion;
     window.submitAdminTeacherOperation = submitAdminTeacherOperation;

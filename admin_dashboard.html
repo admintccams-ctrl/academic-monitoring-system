@@ -2214,8 +2214,11 @@ onchange="loadSubjectsForTeacherAssign()">
         </div>
 
         <div style="margin-top:22px;">
-            <h3>Bulk Student Account Downloads</h3>
-            <p>Downloads become available after every account in a batch has synced or been marked failed.</p>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                <h3>Bulk Student Account Downloads</h3>
+                <button class="btn reject-btn" type="button" onclick="clearAdminBulkAccountBatches('student')">Clear student downloads</button>
+            </div>
+            <p>Downloads become available after every account in a batch has synced or been marked failed. Clearing removes only completed batch-download entries here; account records and credentials in Accounts Created on This Device remain. Delete files already downloaded from your Downloads folder separately.</p>
             <div class="table-responsive">
                 <table>
                     <thead><tr><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
@@ -2484,8 +2487,11 @@ onchange="loadSubjectsForTeacherAssign()">
         </div>
 
         <div style="margin-top:22px;">
-            <h3>Bulk Teacher Account Downloads</h3>
-            <p>Downloads become available after every account in a batch has synced or been marked failed.</p>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                <h3>Bulk Teacher Account Downloads</h3>
+                <button class="btn reject-btn" type="button" onclick="clearAdminBulkAccountBatches('teacher')">Clear teacher downloads</button>
+            </div>
+            <p>Downloads become available after every account in a batch has synced or been marked failed. Clearing removes only completed batch-download entries here; account records and credentials in Accounts Created on This Device remain. Delete files already downloaded from your Downloads folder separately.</p>
             <div class="table-responsive">
                 <table>
                     <thead><tr><th>IDs</th><th>Created</th><th>Status</th><th>Download</th></tr></thead>
@@ -2964,7 +2970,7 @@ onchange="loadSubjectsForTeacherAssign()">
       
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-    <script src="portal-offline.js?v=190"></script>
+    <script src="portal-offline.js?v=192"></script>
     <script>
 
         const SUPABASE_URL =
@@ -10097,6 +10103,36 @@ async function clearAdminCreatedAccounts() {
             showAlert('error', 'Could Not Clear Credentials', error.message || 'Unable to clear saved credentials.');
         }
     });
+}
+
+async function clearAdminBulkAccountBatches(role) {
+    if (!['student', 'teacher'].includes(role)) {
+        showAlert('error', 'Invalid Account Type', 'Open this action from Manage Students or Manage Teachers.');
+        return;
+    }
+
+    const accountType = role === 'student' ? 'student' : 'teacher';
+    showConfirmModal(
+        `Clear ${accountType} Downloads`,
+        `Remove completed ${accountType} batch-download entries from this device? Account records and saved credentials in Accounts Created on This Device will remain. Batches that still need syncing or resuming will be kept. Already downloaded CSV files must be deleted from your Downloads folder separately.`,
+        async () => {
+            try {
+                const result = await window.clearStoredAdminBulkAccountBatches(supabaseClient, role);
+                await renderAdminCreatedAccounts();
+                closeConfirmModal();
+                const clearedMessage = result.clearedBatchCount
+                    ? `Cleared ${result.clearedBatchCount} completed ${accountType} batch-download entry (or entries). Account records and saved credentials were kept.`
+                    : `There were no completed ${accountType} batch-download entries to clear.`;
+                const retainedMessage = result.retainedBatchCount
+                    ? ` ${result.retainedBatchCount} batch(es) that still need syncing or resuming were kept.`
+                    : '';
+                showAlert('success', 'Bulk Downloads Cleared', `${clearedMessage}${retainedMessage}`);
+            } catch (error) {
+                closeConfirmModal();
+                showAlert('error', 'Could Not Clear Downloads', error.message || 'Unable to clear saved bulk downloads.');
+            }
+        }
+    );
 }
 
 async function clearAdminPasswordResetResults() {
