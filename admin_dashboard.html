@@ -116,7 +116,9 @@
         }
 
         .main {
-            width: calc(100% - 260px);
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
             min-height: 100vh;
             margin-left: 260px;
             padding: 30px;
@@ -124,6 +126,7 @@
 
         .content-section {
             display: none;
+            min-width: 0;
         }
 
         .content-section.active-section {
@@ -2774,8 +2777,6 @@ onchange="loadSubjectsForTeacherAssign()">
 
     </div>
 
-</div>
-
 <div class="content-section" id="accountArchiveSection">
     <div class="topbar">
         <div>
@@ -2810,6 +2811,8 @@ onchange="loadSubjectsForTeacherAssign()">
             </table>
         </div>
     </div>
+</div>
+
 </div>
 
     <!-- =========================================================
