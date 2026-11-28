@@ -212,6 +212,79 @@ table td{
     min-width:150px;
 }
 
+.section-passing-grade{
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+    background:white;
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:18px 22px;
+    margin-bottom:20px;
+}
+
+.section-passing-grade h2{
+    color:var(--primary);
+    font-size:17px;
+    margin-bottom:5px;
+}
+
+.section-passing-grade p{
+    color:var(--gray);
+    font-size:13px;
+    line-height:1.5;
+}
+
+.passing-grade-controls{
+    display:flex;
+    align-items:flex-end;
+    gap:10px;
+    flex-wrap:wrap;
+}
+
+.passing-grade-controls label{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    color:var(--primary);
+    font-size:13px;
+    font-weight:600;
+}
+
+.passing-grade-controls input{
+    width:120px;
+    padding:10px 12px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    font-size:15px;
+}
+
+.grade-status{
+    display:inline-block;
+    width:max-content;
+    padding:5px 9px;
+    border-radius:999px;
+    font-size:12px;
+    font-weight:700;
+}
+
+.grade-status.status-passed{
+    color:#166534;
+    background:#dcfce7;
+}
+
+.grade-status.status-failed{
+    color:#991b1b;
+    background:#fee2e2;
+}
+
+.grade-status.status-pending{
+    color:#475569;
+    background:#f1f5f9;
+}
+
 table input,
 table select{
     width:100%;
@@ -620,7 +693,7 @@ table select{
 
     <div class="topbar">
     <h1>Student Status</h1>
-    <p>Manage student grades and academic status</p>
+    <p>Enter grades and view automatically calculated academic results</p>
 </div>
 
    <!-- FILTERS -->
@@ -670,6 +743,23 @@ table select{
 
     </div>
 
+    <div class="section-passing-grade" id="sectionPassingGradePanel" hidden>
+        <div>
+            <h2 id="sectionPassingGradeTitle">Section Passing Grade</h2>
+            <p>Grades at or below the cutoff pass. Higher grades fail. The cutoff applies only to this section.</p>
+            <p id="sectionPassingGradeMessage" role="status" aria-live="polite"></p>
+        </div>
+        <div class="passing-grade-controls">
+            <label for="sectionPassingGradeInput">
+                Passing cutoff (1.0–5.0)
+                <input id="sectionPassingGradeInput" type="number" min="1" max="5" step="0.1" value="3.0">
+            </label>
+            <button type="button" class="btn" id="saveSectionPassingGradeButton" onclick="saveSectionPassingGrade()">
+                Save Cutoff
+            </button>
+        </div>
+    </div>
+
 
     <!-- TABLE -->
 
@@ -680,7 +770,7 @@ table select{
             <h2>Student Records</h2>
 
             <p>
-                Encode grades and update status
+                Enter grades; results are calculated automatically
             </p>
 
         </div>
@@ -692,9 +782,9 @@ table select{
                 <tr>
 
                     <th>Student Name</th>
-                    <th>Prelim / Status</th>
-                    <th>Midterm / Status</th>
-                    <th>Final / Status</th>
+                    <th>Prelim / Result</th>
+                    <th>Midterm / Result</th>
+                    <th>Final / Result</th>
                     <th>Action</th>
 
                 </tr>
@@ -802,7 +892,7 @@ id="confirmModal">
 
 </div>
 
-<script src="portal-offline.js?v=188"></script>
+<script src="portal-offline.js?v=194"></script>
 <script>
 
 /* ================= ALERT FUNCTION ================= */
@@ -958,19 +1048,36 @@ async function getActiveSubjectIds(){
 
 let teacherId = null;
 let teacherUserId = null;
+let currentPassingGrade = 3.0;
+const passingGradeBySection = new Map();
 const gradeBaselineByStudent = new Map();
 const statusRouteParams = new URLSearchParams(window.location.search);
 const targetStudentId = statusRouteParams.get('student_id');
 const targetTerm = statusRouteParams.get('term');
 
 window.capturePortalOfflineState = () => ({
-    gradeBaseline: Array.from(gradeBaselineByStudent.entries())
+    gradeBaseline: Array.from(gradeBaselineByStudent.entries()),
+    passingGrade: currentPassingGrade,
+    passingGradeBySection: Array.from(passingGradeBySection.entries())
 });
 window.restorePortalOfflineState = state => {
     gradeBaselineByStudent.clear();
     (state?.gradeBaseline || []).forEach(([studentId, grade]) => {
         gradeBaselineByStudent.set(String(studentId), grade);
     });
+    passingGradeBySection.clear();
+    (state?.passingGradeBySection || []).forEach(([sectionId, grade]) => {
+        const numericGrade = Number(grade);
+        if (Number.isFinite(numericGrade)) passingGradeBySection.set(String(sectionId), numericGrade);
+    });
+    const savedPassingGrade = Number(state?.passingGrade);
+    currentPassingGrade = Number.isFinite(savedPassingGrade) ? savedPassingGrade : 3.0;
+    const savedSectionId = document.getElementById('sectionFilter')?.value;
+    if (savedSectionId && !passingGradeBySection.has(String(savedSectionId))) {
+        passingGradeBySection.set(String(savedSectionId), currentPassingGrade);
+    }
+    const passingGradeInput = document.getElementById('sectionPassingGradeInput');
+    if (passingGradeInput) passingGradeInput.value = currentPassingGrade.toFixed(1);
 };
 window.applyQueuedGradeToBaseline = payload => {
     const studentId = String(payload?.student_id || '');
@@ -990,6 +1097,89 @@ window.applyQueuedGradeToBaseline = payload => {
 function formatStudentTableName(student) {
     const middleInitial = String(student.middle_initial || '').trim();
     return `${String(student.last_name || '').trim()}, ${String(student.first_name || '').trim()}${middleInitial ? ` ${middleInitial.charAt(0).toUpperCase()}.` : ''}`;
+}
+
+function getTermGradeStatus(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const grade = Number(value);
+    if (!Number.isFinite(grade)) return null;
+    return grade <= currentPassingGrade ? 'PASSED' : 'FAILED';
+}
+
+function getOverallGradeStatus(termStatuses) {
+    if (Object.values(termStatuses).includes('FAILED')) return 'FAILED';
+    if (Object.values(termStatuses).every(value => value === 'PASSED')) return 'PASSED';
+    return null;
+}
+
+function updateGradeStatus(studentId, term) {
+    const input = document.getElementById(`${term}-${studentId}`);
+    const status = document.getElementById(`${term}-status-${studentId}`);
+    if (!input || !status) return;
+    const value = input.value;
+    const gradeStatus = getTermGradeStatus(value);
+    status.textContent = gradeStatus || 'Pending';
+    status.classList.remove('status-passed', 'status-failed', 'status-pending');
+    status.classList.add(gradeStatus === 'PASSED' ? 'status-passed'
+        : gradeStatus === 'FAILED' ? 'status-failed' : 'status-pending');
+}
+
+function updateSectionPassingGradePanel(sectionId, sectionName, passingGrade) {
+    const panel = document.getElementById('sectionPassingGradePanel');
+    const input = document.getElementById('sectionPassingGradeInput');
+    const message = document.getElementById('sectionPassingGradeMessage');
+    const saveButton = document.getElementById('saveSectionPassingGradeButton');
+    if (!panel || !input || !message || !saveButton) return;
+
+    currentPassingGrade = Number.isFinite(Number(passingGrade)) ? Number(passingGrade) : 3.0;
+    input.value = currentPassingGrade.toFixed(1);
+    document.getElementById('sectionPassingGradeTitle').textContent = `Passing Grade — ${sectionName || 'Selected Section'}`;
+    panel.hidden = !sectionId;
+    const canEdit = Boolean(sectionId) && navigator.onLine;
+    input.disabled = !canEdit;
+    saveButton.disabled = !canEdit;
+    message.textContent = navigator.onLine
+        ? `Cutoff for this section: ${currentPassingGrade.toFixed(1)}. Grades at or below it pass.`
+        : 'Offline: showing the saved section cutoff. Reconnect to change it.';
+}
+
+async function saveSectionPassingGrade() {
+    const sectionId = Number(sectionFilter.value);
+    const input = document.getElementById('sectionPassingGradeInput');
+    const saveButton = document.getElementById('saveSectionPassingGradeButton');
+    const passingGrade = Number(input?.value);
+    const oneDecimalPlace = Number.isFinite(passingGrade)
+        && Math.abs(passingGrade * 10 - Math.round(passingGrade * 10)) < 1e-8;
+    if (!Number.isInteger(sectionId) || sectionId <= 0
+        || !oneDecimalPlace || passingGrade < 1 || passingGrade > 5) {
+        showAlert('warning', 'Invalid Passing Grade', 'Enter a cutoff from 1.0 to 5.0 in increments of 0.1.');
+        return;
+    }
+    if (!navigator.onLine) {
+        showAlert('warning', 'Internet Required', 'Reconnect to save the passing-grade cutoff for this section.');
+        return;
+    }
+
+    saveButton.disabled = true;
+    saveButton.textContent = 'Saving...';
+    try {
+        const { error } = await supabaseClient.rpc('set_teacher_section_passing_grade', {
+            p_section_id: sectionId,
+            p_passing_grade: passingGrade
+        });
+        if (error) throw error;
+
+        currentPassingGrade = passingGrade;
+        passingGradeBySection.set(String(sectionId), passingGrade);
+        updateSectionPassingGradePanel(sectionId, sectionFilter.selectedOptions[0]?.textContent, passingGrade);
+        await loadStudents();
+        showAlert('success', 'Passing Grade Saved', `Grades for ${sectionFilter.selectedOptions[0]?.textContent || 'this section'} now pass at ${passingGrade.toFixed(1)} or lower.`);
+    } catch (error) {
+        showAlert('error', 'Could Not Save Cutoff', error.message || 'Unable to save the passing grade for this section.');
+    } finally {
+        saveButton.disabled = !navigator.onLine;
+        saveButton.textContent = 'Save Cutoff';
+    }
 }
 
 const yearFilter =
@@ -1056,7 +1246,7 @@ function focusStatusRouteTarget() {
         if (!target) return;
         target.classList.add('selected-student-row');
         const termControl = targetTerm
-            ? document.getElementById(`${targetTerm}-status-${targetStudentId}`)
+            ? document.getElementById(`${targetTerm}-${targetStudentId}`)
             : null;
         (termControl || target).scrollIntoView({ behavior: 'smooth', block: 'center' });
         if (termControl) termControl.focus({ preventScroll: true });
@@ -1378,11 +1568,13 @@ async()=>{
 
 async function loadSectionsForSubject(subjectId){
     sectionFilter.innerHTML='<option value="">Select Section</option>';
+    passingGradeBySection.clear();
+    updateSectionPassingGradePanel('', '', 3.0);
     if(!teacherId||!subjectId) return;
 
     const {data,error}=await supabaseClient
         .from('teacher_subject_assignments')
-        .select('assignment_id, teacher_section_assignments(section_id, sections(section_id, section_name))')
+        .select('assignment_id, teacher_section_assignments(section_id, sections(section_id, section_name, passing_grade))')
         .eq('teacher_id',teacherId)
         .eq('subject_id',subjectId);
     if(error){
@@ -1397,7 +1589,12 @@ async function loadSectionsForSubject(subjectId){
             if(section) sections.set(String(section.section_id),section);
         });
     });
-    sections.forEach(section=>sectionFilter.add(new Option(section.section_name,section.section_id)));
+    sections.forEach(section=>{
+        const passingGrade = Number(section.passing_grade ?? 3.0);
+        passingGradeBySection.set(String(section.section_id),
+            Number.isFinite(passingGrade) ? passingGrade : 3.0);
+        sectionFilter.add(new Option(section.section_name,section.section_id));
+    });
 }
 
 async function applyStatusRoute(){
@@ -1437,10 +1634,34 @@ async function loadStudents(){
     const subjectId =
     subjectFilter.value;
 
-    if(
-        !sectionId ||
-        !subjectId
-    ) return;
+    if (!sectionId || !subjectId) {
+        updateSectionPassingGradePanel('', '', 3.0);
+        tableBody.innerHTML = '<tr><td colspan="5" class="empty">Select filters to load students</td></tr>';
+        return;
+    }
+
+    const sectionName = sectionFilter.selectedOptions[0]?.textContent || 'Selected Section';
+    let passingGrade = passingGradeBySection.get(String(sectionId));
+    if (navigator.onLine) {
+        const { data: section, error: sectionError } = await supabaseClient
+            .from('sections')
+            .select('passing_grade')
+            .eq('section_id', sectionId)
+            .maybeSingle();
+        if (sectionError) {
+            console.error('Unable to load section passing grade', sectionError);
+            showAlert('error', 'Could Not Load Cutoff', sectionError.message);
+            return;
+        }
+        passingGrade = Number(section?.passing_grade ?? 3.0);
+        if (!Number.isFinite(passingGrade)) passingGrade = 3.0;
+        passingGradeBySection.set(String(sectionId), passingGrade);
+    } else if (passingGrade === undefined) {
+        showAlert('error', 'Cutoff Not Cached', 'Reconnect while viewing this section to save its passing-grade cutoff for offline use.');
+        tableBody.innerHTML = '<tr><td colspan="5" class="empty">The passing-grade cutoff for this section is not available offline.</td></tr>';
+        return;
+    }
+    updateSectionPassingGradePanel(sectionId, sectionName, passingGrade);
 
     tableBody.innerHTML = '<tr><td colspan="5" class="empty">Loading students...</td></tr>';
 
@@ -1538,35 +1759,20 @@ async function loadStudents(){
 
         <td>
             <div class="status-stack">
-                <input type="number" step="0.1" id="prelim-${student.student_id}" value="${formatGradeInput(grade?.prelim)}">
-                <select id="prelim-status-${student.student_id}" onchange="updateStatusColor(this)">
-                    <option value="">Pending</option>
-                    <option value="PASSED" ${grade?.prelim_status === "PASSED" ? "selected" : ""}>Passed</option>
-                    <option value="FAILED" ${grade?.prelim_status === "FAILED" ? "selected" : ""}>Failed</option>
-                    <option value="INCOMPLETE" ${grade?.prelim_status === "INCOMPLETE" ? "selected" : ""}>Incomplete</option>
-                </select>
+                <input type="number" min="1" max="5" step="0.1" id="prelim-${student.student_id}" oninput="updateGradeStatus(${student.student_id}, 'prelim')" value="${formatGradeInput(grade?.prelim)}">
+                <span id="prelim-status-${student.student_id}" class="grade-status" role="status" tabindex="-1"></span>
             </div>
         </td>
         <td>
             <div class="status-stack">
-                <input type="number" step="0.1" id="midterm-${student.student_id}" value="${formatGradeInput(grade?.midterm)}">
-                <select id="midterm-status-${student.student_id}" onchange="updateStatusColor(this)">
-                    <option value="">Pending</option>
-                    <option value="PASSED" ${grade?.midterm_status === "PASSED" ? "selected" : ""}>Passed</option>
-                    <option value="FAILED" ${grade?.midterm_status === "FAILED" ? "selected" : ""}>Failed</option>
-                    <option value="INCOMPLETE" ${grade?.midterm_status === "INCOMPLETE" ? "selected" : ""}>Incomplete</option>
-                </select>
+                <input type="number" min="1" max="5" step="0.1" id="midterm-${student.student_id}" oninput="updateGradeStatus(${student.student_id}, 'midterm')" value="${formatGradeInput(grade?.midterm)}">
+                <span id="midterm-status-${student.student_id}" class="grade-status" role="status" tabindex="-1"></span>
             </div>
         </td>
         <td>
             <div class="status-stack">
-                <input type="number" step="0.1" id="final-${student.student_id}" value="${formatGradeInput(grade?.final)}">
-                <select id="final-status-${student.student_id}" onchange="updateStatusColor(this)">
-                    <option value="">Pending</option>
-                    <option value="PASSED" ${grade?.final_status === "PASSED" ? "selected" : ""}>Passed</option>
-                    <option value="FAILED" ${grade?.final_status === "FAILED" ? "selected" : ""}>Failed</option>
-                    <option value="INCOMPLETE" ${grade?.final_status === "INCOMPLETE" ? "selected" : ""}>Incomplete</option>
-                </select>
+                <input type="number" min="1" max="5" step="0.1" id="final-${student.student_id}" oninput="updateGradeStatus(${student.student_id}, 'final')" value="${formatGradeInput(grade?.final)}">
+                <span id="final-status-${student.student_id}" class="grade-status" role="status" tabindex="-1"></span>
             </div>
         </td>
 
@@ -1585,6 +1791,7 @@ onclick="saveGrade(${student.student_id})">
         </tr>
 
         `;
+        ['prelim', 'midterm', 'final'].forEach(term => updateGradeStatus(student.student_id, term));
 
     }
 
@@ -1592,7 +1799,7 @@ onclick="saveGrade(${student.student_id})">
         const target=document.getElementById(`student-row-${targetStudentId}`);
         if(target){
             const termControl=targetTerm
-                ? document.getElementById(`${targetTerm}-status-${targetStudentId}`)
+                ? document.getElementById(`${targetTerm}-${targetStudentId}`)
                 : null;
             (termControl||target).scrollIntoView({behavior:'smooth',block:'center'});
             if(termControl) termControl.focus({preventScroll:true});
@@ -1601,26 +1808,6 @@ onclick="saveGrade(${student.student_id})">
 
     await saveTeacherOfflineSnapshot(supabaseClient, 'status');
 
-}
-function updateStatusColor(select){
-
-    select.classList.remove(
-        "status-passed",
-        "status-failed",
-        "status-incomplete"
-    );
-
-    if(select.value==="PASSED"){
-        select.classList.add("status-passed");
-    }
-
-    if(select.value==="FAILED"){
-        select.classList.add("status-failed");
-    }
-
-    if(select.value==="INCOMPLETE"){
-        select.classList.add("status-incomplete");
-    }
 }
 /* ==================================================
 SAVE GRADE
@@ -1635,18 +1822,26 @@ studentId
     const subjectId = currentSubjectFilter?.value || "";
     const baseline = gradeBaselineByStudent.get(String(studentId)) || null;
     const termValues = Object.fromEntries(['prelim', 'midterm', 'final'].map(term => [term, {
-        grade: document.getElementById(`${term}-${studentId}`).value,
-        status: document.getElementById(`${term}-status-${studentId}`).value
+        grade: document.getElementById(`${term}-${studentId}`).value
     }]));
+    const invalidGrade = Object.entries(termValues).find(([, value]) => {
+        if (value.grade === '') return false;
+        const grade = Number(value.grade);
+        return !Number.isFinite(grade) || grade < 1 || grade > 5
+            || Math.abs(grade * 10 - Math.round(grade * 10)) >= 1e-8;
+    });
+    if (invalidGrade) {
+        showAlert("warning", "Invalid Grade", "Enter grades from 1.0 to 5.0 in increments of 0.1.");
+        return;
+    }
+
     const gradeChanged = (value, original) => {
         const currentNumber = value === '' ? null : Number(value);
         const originalNumber = original == null || original === '' ? null : Number(original);
         return currentNumber !== originalNumber;
     };
-    const changedTerms = Object.keys(termValues).filter(term =>
-        gradeChanged(termValues[term].grade, baseline?.[term])
-        || (termValues[term].status || null) !== (baseline?.[`${term}_status`] || null)
-    );
+    const changedTerms = Object.keys(termValues)
+        .filter(term => gradeChanged(termValues[term].grade, baseline?.[term]));
 
     if (!Number.isInteger(Number(subjectId)) || Number(subjectId) <= 0
         || !Number.isInteger(Number(currentSectionFilter?.value)) || Number(currentSectionFilter.value) <= 0) {
@@ -1659,23 +1854,22 @@ studentId
         return;
     }
 
-    const nextStatuses = {
-        prelim: baseline?.prelim_status || null,
-        midterm: baseline?.midterm_status || null,
-        final: baseline?.final_status || null
-    };
-    changedTerms.forEach(term => { nextStatuses[term] = termValues[term].status || null; });
-    const status = Object.values(nextStatuses).includes("FAILED")
-        ? "FAILED"
-        : Object.values(nextStatuses).includes("INCOMPLETE")
-            ? "INCOMPLETE"
-            : Object.values(nextStatuses).every(value => value === "PASSED")
-                ? "PASSED"
-                : null;
+    const nextGrades = Object.fromEntries(['prelim', 'midterm', 'final'].map(term => [
+        term,
+        termValues[term].grade === '' ? null : Number(termValues[term].grade)
+    ]));
+    const nextStatuses = Object.fromEntries(['prelim', 'midterm', 'final'].map(term => [
+        term,
+        getTermGradeStatus(nextGrades[term])
+    ]));
+    const status = getOverallGradeStatus(nextStatuses);
     const changedFields = {};
     changedTerms.forEach(term => {
-        changedFields[term] = termValues[term].grade === '' ? null : termValues[term].grade;
-        changedFields[`${term}_status`] = termValues[term].status || null;
+        changedFields[term] = nextGrades[term];
+    });
+    ['prelim', 'midterm', 'final'].forEach(term => {
+        changedFields[`${term}_status`] = nextStatuses[term];
+        updateGradeStatus(studentId, term);
     });
 
     if (!navigator.onLine) {
@@ -1706,18 +1900,15 @@ studentId
     const result = baseline
         ? await supabaseClient.from("student_grades").update(updatePayload)
             .eq("student_id", studentId).eq("subject_id", subjectId)
+            .select("student_id, prelim, midterm, final, prelim_status, midterm_status, final_status, status")
+            .maybeSingle()
         : await supabaseClient.from("student_grades").insert({
             student_id: Number(studentId),
             subject_id: Number(subjectId),
-            prelim: termValues.prelim.grade || null,
-            midterm: termValues.midterm.grade || null,
-            final: termValues.final.grade || null,
-            prelim_status: termValues.prelim.status || null,
-            midterm_status: termValues.midterm.status || null,
-            final_status: termValues.final.status || null,
+            ...nextGrades,
             ...updatePayload
-        });
-    const { error } = result;
+        }).select("student_id, prelim, midterm, final, prelim_status, midterm_status, final_status, status").single();
+    const { data: savedGrade, error } = result;
 
     if(error){
 
@@ -1732,8 +1923,7 @@ studentId
 
     gradeBaselineByStudent.set(String(studentId), {
         ...(baseline || { student_id: Number(studentId), subject_id: Number(subjectId) }),
-        ...changedFields,
-        status
+        ...(savedGrade || { ...nextGrades, ...changedFields, status })
     });
 
     showAlert(

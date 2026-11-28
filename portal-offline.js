@@ -2751,21 +2751,15 @@
             if (operation.type === 'grade' && pageKey === 'status') {
                 const currentSubject = container.querySelector('#subjectFilter')?.value;
                 if (String(currentSubject) !== String(payload.subject_id)) continue;
-                const gradeFields = {
-                    prelim: 'prelim',
-                    midterm: 'midterm',
-                    final: 'final',
-                    prelim_status: 'prelim-status',
-                    midterm_status: 'midterm-status',
-                    final_status: 'final-status'
-                };
-                Object.entries(gradeFields).forEach(([payloadField, elementId]) => {
-                    if (!Object.prototype.hasOwnProperty.call(payload, payloadField)) return;
-                    const input = container.querySelector(`#${elementId}-${payload.student_id}`);
+                ['prelim', 'midterm', 'final'].forEach(term => {
+                    if (!Object.prototype.hasOwnProperty.call(payload, term)) return;
+                    const input = container.querySelector(`#${term}-${payload.student_id}`);
                     if (!input) return;
-                    input.value = payload[payloadField] ?? '';
-                    if (input.tagName === 'SELECT' && typeof window.updateStatusColor === 'function') {
-                        window.updateStatusColor(input);
+                    input.value = payload[term] ?? '';
+                });
+                ['prelim', 'midterm', 'final'].forEach(term => {
+                    if (typeof window.updateGradeStatus === 'function') {
+                        window.updateGradeStatus(payload.student_id, term);
                     }
                 });
                 if (typeof window.applyQueuedGradeToBaseline === 'function') {
