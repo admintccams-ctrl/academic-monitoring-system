@@ -584,7 +584,7 @@
     </style>
     <link rel="stylesheet" href="mobile_fix.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="portal-offline.js?v=188"></script>
+    <script src="portal-offline.js?v=195"></script>
 </head>
 
 <body>
@@ -746,7 +746,7 @@ Select Subject and Section
 
                 <div class="modal-header">
 
-                    <h3>Add Requirement</h3>
+                    <h3 id="requirementModalTitle">Add Requirement</h3>
 
                     <button class="close-btn" onclick="closeRequirementModal()">
 
@@ -786,7 +786,7 @@ Select Subject and Section
 
                     <input type="file" id="requirementFile" style="margin-top:12px; padding:12px; border:1px solid #dbe4f0; border-radius:12px; width:100%;">
 
-                    <button class="btn" onclick="saveRequirement()">
+                    <button class="btn" id="saveRequirementButton" onclick="saveRequirement()">
 
                         Save Requirement
 
@@ -848,6 +848,7 @@ Select Subject and Section
             let teacherId = null;
             let teacherUserId = null;
             let currentRequirementStudents = [];
+            let editingQueuedRequirement = null;
 
             window.capturePortalOfflineState = () => ({ requirementStudents: currentRequirementStudents });
             window.restorePortalOfflineState = state => {
@@ -1086,6 +1087,7 @@ Select Subject and Section
                         <tr>
                             <td colspan="3">Select Subject and Section</td>
                         </tr>`;
+                    await renderQueuedTeacherRequirements();
                     await saveTeacherOfflineSnapshot(supabaseClient, 'subjects');
                     return;
                 }
@@ -1106,6 +1108,7 @@ Select Subject and Section
                         <tr>
                             <td colspan="3">No students found</td>
                         </tr>`;
+                    await renderQueuedTeacherRequirements();
                     await saveTeacherOfflineSnapshot(supabaseClient, 'subjects');
                     return;
                 }
@@ -1190,6 +1193,7 @@ Select Subject and Section
                             <td>
                                 <div class="action-buttons">
                                     <button class="btn" onclick="openRequirementModal(${student.student_id})">Add</button>
+                                    <button class="btn btn-danger" onclick="clearStudentRequirements(${student.student_id})" title="Clear all requirements for this student in the selected subject">Clear</button>
                                 </div>
                             </td>
                         </tr>`;
@@ -1197,13 +1201,195 @@ Select Subject and Section
                 }
 
                 studentsTable.innerHTML = html;
+                await renderQueuedTeacherRequirements();
                 await saveTeacherOfflineSnapshot(supabaseClient, 'subjects');
             }
 
+            async function renderQueuedTeacherRequirements() {
+                document.querySelectorAll('.offline-queued-requirement, .offline-queued-clear').forEach(element => element.remove());
+                const subjectId = document.getElementById('subjectSelect')?.value;
+                if (!subjectId || typeof window.getTeacherOfflineQueue !== 'function') return;
+
+                const operations = await window.getTeacherOfflineQueue(supabaseClient);
+                const studentStates = new Map();
+                operations.forEach(operation => {
+                    const payload = operation.payload || {};
+                    if (String(payload.subject_id) !== String(subjectId)) return;
+                    if (operation.type === 'requirement') {
+                        (payload.student_ids || []).forEach(studentId => {
+                            const key = String(studentId);
+                            const state = studentStates.get(key) || { requirements: [], clearOperation: null };
+                            state.requirements.push(operation);
+                            studentStates.set(key, state);
+                        });
+                    } else if (operation.type === 'requirement_clear') {
+                        const key = String(payload.student_id);
+                        const state = studentStates.get(key) || { requirements: [], clearOperation: null };
+                        state.requirements = [];
+                        state.clearOperation = operation;
+                        studentStates.set(key, state);
+                    }
+                });
+
+                studentStates.forEach((state, studentId) => {
+                    const row = Array.from(document.querySelectorAll('#studentsTable tr[data-student-id]'))
+                        .find(candidate => String(candidate.dataset.studentId) === studentId);
+                    const cell = row?.children[1];
+                    if (!cell) return;
+
+                    if (state.clearOperation) {
+                        const clearCard = document.createElement('div');
+                        clearCard.className = 'offline-queued-clear';
+                        clearCard.style.cssText = 'margin:8px 0;padding:10px;border-left:3px solid #d97706;background:#fffbeb;color:#92400e;font-size:13px;';
+                        const clearLabel = document.createElement('strong');
+                        clearLabel.textContent = state.clearOperation.lastError
+                            ? 'Clear needs attention'
+                            : 'Clear waiting to sync';
+                        const clearDescription = document.createElement('div');
+                        clearDescription.textContent = state.clearOperation.lastError
+                            ? `The clear is still saved here: ${state.clearOperation.lastError}`
+                            : 'All requirements for this student in this subject will be removed after sync.';
+                        const cancelButton = document.createElement('button');
+                        cancelButton.type = 'button';
+                        cancelButton.className = 'btn btn-danger';
+                        cancelButton.textContent = 'Cancel Clear';
+                        cancelButton.style.cssText = 'margin-top:8px;padding:5px 9px;font-size:12px;';
+                        cancelButton.addEventListener('click', () => void cancelQueuedRequirementClear(state.clearOperation.operationId));
+                        clearCard.append(clearLabel, clearDescription, cancelButton);
+                        cell.appendChild(clearCard);
+                    }
+
+                    state.requirements.forEach(operation => {
+                        const payload = operation.payload || {};
+                        const card = document.createElement('div');
+                        card.className = 'offline-queued-requirement';
+                        card.dataset.operationId = operation.operationId;
+                        card.style.cssText = 'margin:8px 0;padding:10px;border-left:3px solid #d97706;background:#fffbeb;color:#92400e;font-size:13px;';
+
+                        const title = document.createElement('strong');
+                        title.textContent = payload.requirement_title || 'Untitled requirement';
+                        const syncNote = document.createElement('div');
+                        syncNote.textContent = operation.lastError
+                            ? `Needs attention: ${operation.lastError}`
+                            : 'Waiting to sync';
+                        syncNote.style.cssText = 'margin-top:4px;font-weight:600;';
+                        card.append(title, syncNote);
+
+                        if (payload.requirement_description) {
+                            const description = document.createElement('div');
+                            description.textContent = payload.requirement_description;
+                            description.style.cssText = 'margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere;color:#334155;';
+                            card.appendChild(description);
+                        }
+                        if (payload.deadline) {
+                            const deadline = document.createElement('div');
+                            deadline.textContent = `Deadline: ${payload.deadline}`;
+                            deadline.style.cssText = 'margin-top:5px;color:#334155;';
+                            card.appendChild(deadline);
+                        }
+                        if (operation.file?.name) {
+                            const file = document.createElement('div');
+                            file.textContent = `Instruction file: ${operation.file.name}`;
+                            file.style.cssText = 'margin-top:5px;color:#334155;';
+                            card.appendChild(file);
+                        }
+
+                        const actions = document.createElement('div');
+                        actions.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;';
+                        const editButton = document.createElement('button');
+                        editButton.type = 'button';
+                        editButton.className = 'btn';
+                        editButton.textContent = 'Edit';
+                        editButton.addEventListener('click', () => void editQueuedRequirement(operation.operationId, studentId));
+                        const deleteButton = document.createElement('button');
+                        deleteButton.type = 'button';
+                        deleteButton.className = 'btn btn-danger';
+                        deleteButton.textContent = 'Delete';
+                        deleteButton.addEventListener('click', () => void discardQueuedRequirement(operation.operationId, studentId));
+                        actions.append(editButton, deleteButton);
+                        card.appendChild(actions);
+                        cell.appendChild(card);
+                    });
+                });
+            }
+
+            async function editQueuedRequirement(operationId, studentId) {
+                try {
+                    const operations = await window.getTeacherOfflineQueue(supabaseClient);
+                    const operation = operations.find(item => item.operationId === operationId && item.type === 'requirement');
+                    if (!operation || !(operation.payload?.student_ids || []).some(id => String(id) === String(studentId))) {
+                        throw new Error('This saved requirement is no longer waiting to sync.');
+                    }
+                    openRequirementModal(Number(studentId));
+                    editingQueuedRequirement = { operationId, studentId: Number(studentId) };
+                    document.getElementById('requirementTitle').value = operation.payload.requirement_title || '';
+                    document.getElementById('requirementDescription').value = operation.payload.requirement_description || '';
+                    document.getElementById('requirementDeadline').value = operation.payload.deadline || '';
+                    document.getElementById('requirementModalTitle').textContent = 'Edit Waiting Requirement';
+                    document.getElementById('saveRequirementButton').textContent = 'Save Changes';
+                } catch (error) {
+                    showAlert('error', 'Could Not Open Requirement', error.message || 'Unable to edit this saved requirement.');
+                }
+            }
+
+            async function discardQueuedRequirement(operationId, studentId) {
+                showConfirmModal('Delete Saved Requirement', 'Remove this unsynced requirement for this student from this device?', async () => {
+                    try {
+                        await window.discardQueuedTeacherRequirement(supabaseClient, operationId, Number(studentId));
+                        await renderQueuedTeacherRequirements();
+                        showAlert('success', 'Saved Requirement Deleted', 'The unsynced requirement was removed from this student.');
+                    } catch (error) {
+                        showAlert('error', 'Could Not Delete Requirement', error.message || 'Unable to remove this saved requirement.');
+                    }
+                });
+            }
+
+            async function cancelQueuedRequirementClear(operationId) {
+                try {
+                    await window.discardTeacherOfflineOperation(supabaseClient, operationId);
+                    await renderQueuedTeacherRequirements();
+                    showAlert('success', 'Clear Cancelled', 'The queued clear was cancelled. No server requirements were deleted.');
+                } catch (error) {
+                    showAlert('error', 'Could Not Cancel Clear', error.message || 'Unable to cancel the queued clear.');
+                }
+            }
+
+            function clearStudentRequirements(studentId) {
+                const subjectId = Number(document.getElementById('subjectSelect').value);
+                if (!Number.isInteger(subjectId) || subjectId <= 0) {
+                    return showAlert('warning', 'Choose a Subject', "Select a subject before clearing this student's requirements.");
+                }
+                showConfirmModal(
+                    'Clear Student Requirements',
+                    'Remove all requirements for this student in the selected subject? This includes unsynced requirements on this device.',
+                    async () => {
+                        try {
+                            const operationId = await queueTeacherOperation(supabaseClient, 'requirement_clear', {
+                                student_id: Number(studentId),
+                                subject_id: subjectId
+                            });
+                            if (navigator.onLine) await syncTeacherOfflineQueue(supabaseClient);
+                            const stillQueued = (await window.getTeacherOfflineQueue(supabaseClient))
+                                .some(operation => operation.operationId === operationId);
+                            if (stillQueued) {
+                                showAlert('warning', 'Clear Waiting to Sync', 'The clear remains saved on this device and will retry when the database service is ready.');
+                            } else {
+                                showAlert('success', 'Requirements Cleared', 'All requirements for this student in the selected subject were removed.');
+                                await loadStudents();
+                            }
+                        } catch (error) {
+                            showAlert('error', 'Could Not Clear Requirements', error.message || 'Unable to save the clear request.');
+                        }
+                    }
+                );
+            }
+
             async function saveRequirement() {
-                const studentIds = Array.from(document.querySelectorAll('.requirement-student-check:checked'))
-                    .map(input => Number(input.value))
-                    .filter(Number.isFinite);
+                const studentIds = editingQueuedRequirement
+                    ? [editingQueuedRequirement.studentId]
+                    : Array.from(document.querySelectorAll('.requirement-student-check:checked'))
+                        .map(input => Number(input.value))
+                        .filter(Number.isFinite);
                 const subjectId = document.getElementById('subjectSelect').value;
                 const title = document.getElementById('requirementTitle').value.trim();
                 const description = document.getElementById('requirementDescription').value.trim();
@@ -1212,6 +1398,29 @@ Select Subject and Section
 
                 if (!studentIds.length || !subjectId || !title) {
                     return showAlert('warning', 'Validation', 'Select at least one student and enter a requirement title.');
+                }
+
+                if (editingQueuedRequirement) {
+                    try {
+                        await window.updateQueuedTeacherRequirement(
+                            supabaseClient,
+                            editingQueuedRequirement.operationId,
+                            editingQueuedRequirement.studentId,
+                            {
+                                subject_id: Number(subjectId),
+                                requirement_title: title,
+                                requirement_description: description,
+                                deadline: deadline || null
+                            },
+                            file || null
+                        );
+                        closeRequirementModal();
+                        await renderQueuedTeacherRequirements();
+                        showAlert('success', 'Saved Requirement Updated', 'The unsynced requirement was updated on this device.');
+                    } catch (error) {
+                        showAlert('error', 'Could Not Update Requirement', error.message || 'Unable to update this saved requirement.');
+                    }
+                    return;
                 }
 
                 if (!navigator.onLine) {
@@ -1493,6 +1702,16 @@ Select Subject and Section
             document.getElementById('sectionSelect').addEventListener('change', async function () {
                 if (document.getElementById('subjectSelect').value) await loadStudents();
             });
+
+        </script>
+        <script>
+            window.renderQueuedTeacherRequirements = renderQueuedTeacherRequirements;
+            window.addEventListener('teacher-offline-queue-changed', () => {
+                if (window.currentStudentOfflinePage !== 'subjects') return;
+                renderQueuedTeacherRequirements().catch(error => {
+                    console.error('Unable to render saved requirements.', error);
+                });
+            });
         </script>
         <!-- ================= AMS ALERT ================= -->
 
@@ -1707,6 +1926,9 @@ Select Subject and Section
             }
 
             function openRequirementModal(studentId = null) {
+                editingQueuedRequirement = null;
+                document.getElementById('requirementModalTitle').textContent = 'Add Requirement';
+                document.getElementById('saveRequirementButton').textContent = 'Save Requirement';
                 if (!currentRequirementStudents.length) {
                     currentRequirementStudents = Array.from(document.querySelectorAll('#studentsTable tr'))
                         .map(row => {
@@ -1798,6 +2020,9 @@ Select Subject and Section
 
             function closeRequirementModal() {
                 document.getElementById("requirementModal").style.display = "none";
+                editingQueuedRequirement = null;
+                document.getElementById('requirementModalTitle').textContent = 'Add Requirement';
+                document.getElementById('saveRequirementButton').textContent = 'Save Requirement';
                 // Clear form fields
                 document.getElementById('requirementTitle').value = '';
                 document.getElementById('requirementDescription').value = '';

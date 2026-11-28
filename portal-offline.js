@@ -529,6 +529,11 @@
         const userId = await getUserId(client);
         if (!userId) throw new Error('Sign in while online before making offline changes.');
         const operationId = createOperationId();
+        const pending = await getTeacherQueue(client);
+        const lastQueuedAt = pending.reduce((latest, queuedOperation) => {
+            const timestamp = Date.parse(queuedOperation.createdAt);
+            return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
+        }, 0);
         const database = await openDatabase();
         const operation = {
             key: `${userId}:${operationId}`,
@@ -537,7 +542,7 @@
             type,
             payload,
             file: file || null,
-            createdAt: new Date().toISOString()
+            createdAt: new Date(Math.max(Date.now(), lastQueuedAt + 1)).toISOString()
         };
         await new Promise((resolve, reject) => {
             const transaction = database.transaction(queueStoreName, 'readwrite');
@@ -545,15 +550,17 @@
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error || new Error('Unable to queue this change on the device.'));
         });
-        const pending = await getTeacherQueue(client);
         const changeLabel = type === 'grade'
             ? 'Grade'
             : type === 'attachment'
                 ? 'Attachment'
                 : type === 'requirement_delete'
                     ? 'Delete'
+                        : type === 'requirement_clear'
+                            ? 'Clear requirements'
                     : 'Requirement';
-        setNotice(`${changeLabel} saved on this device. ${pending.length} change${pending.length === 1 ? '' : 's'} waiting to sync.`, true, 'sync');
+        const pendingCount = pending.length + 1;
+        setNotice(`${changeLabel} saved on this device. ${pendingCount} change${pendingCount === 1 ? '' : 's'} waiting to sync.`, true, 'sync');
         window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
         if (window.currentOfflineRole === 'teacher' && window.currentStudentOfflinePage) {
             await applyQueuedTeacherOperations(client, window.currentStudentOfflinePage, document.querySelector('.main'));
@@ -577,12 +584,90 @@
     }
 
     async function discardTeacherOfflineOperation(client, operationId) {
+        if (syncInProgress) throw new Error('This change is syncing. Wait for sync to finish before removing it.');
         const userId = await getUserId(client);
         if (!userId || !operationId) throw new Error('Sign in before removing a saved teacher change.');
         const key = `${userId}:${operationId}`;
         const operation = await adminStoreRequest(queueStoreName, 'readonly', store => store.get(key));
         if (!operation || operation.userId !== userId) throw new Error('This saved teacher change was not found.');
         await removeQueuedTeacherOperation(key);
+        try { sessionStorage.removeItem(teacherSyncFailureStorageKey); } catch {}
+        window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
+        return true;
+    }
+
+    async function updateQueuedTeacherRequirement(client, operationId, studentId, payload, file = null) {
+        if (syncInProgress) throw new Error('This requirement is syncing. Wait for sync to finish before editing it.');
+        const userId = await getUserId(client);
+        const key = `${userId}:${operationId}`;
+        const operation = await adminStoreRequest(queueStoreName, 'readonly', store => store.get(key));
+        if (!operation || operation.userId !== userId || operation.type !== 'requirement') {
+            throw new Error('This saved requirement is no longer waiting to sync.');
+        }
+
+        const selectedStudentId = String(studentId);
+        const studentIds = (operation.payload?.student_ids || []).map(String);
+        if (!studentIds.includes(selectedStudentId)) {
+            throw new Error('This saved requirement no longer includes the selected student.');
+        }
+
+        const updatedOperation = {
+            ...operation,
+            payload: {
+                ...operation.payload,
+                ...payload,
+                student_ids: [Number(selectedStudentId)]
+            },
+            file: file || operation.file || null
+        };
+        const remainingStudentIds = studentIds.filter(id => id !== selectedStudentId);
+        const remainderOperationId = remainingStudentIds.length ? createOperationId() : null;
+        const remainderOperation = remainderOperationId
+            ? {
+                ...operation,
+                key: `${userId}:${remainderOperationId}`,
+                operationId: remainderOperationId,
+                payload: { ...operation.payload, student_ids: remainingStudentIds.map(Number) }
+            }
+            : null;
+
+        const database = await openDatabase();
+        await new Promise((resolve, reject) => {
+            const transaction = database.transaction(queueStoreName, 'readwrite');
+            const store = transaction.objectStore(queueStoreName);
+            store.put(updatedOperation);
+            if (remainderOperation) store.put(remainderOperation);
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || new Error('Unable to update the saved requirement.'));
+            transaction.onabort = () => reject(transaction.error || new Error('Updating the saved requirement was interrupted.'));
+        });
+        window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
+        return true;
+    }
+
+    async function discardQueuedTeacherRequirement(client, operationId, studentId) {
+        if (syncInProgress) throw new Error('This requirement is syncing. Wait for sync to finish before deleting it.');
+        const userId = await getUserId(client);
+        const key = `${userId}:${operationId}`;
+        const operation = await adminStoreRequest(queueStoreName, 'readonly', store => store.get(key));
+        if (!operation || operation.userId !== userId || operation.type !== 'requirement') {
+            throw new Error('This saved requirement is no longer waiting to sync.');
+        }
+
+        const selectedStudentId = String(studentId);
+        const studentIds = (operation.payload?.student_ids || []).map(String);
+        if (!studentIds.includes(selectedStudentId)) {
+            throw new Error('This saved requirement no longer includes the selected student.');
+        }
+        const remainingStudentIds = studentIds.filter(id => id !== selectedStudentId);
+        if (remainingStudentIds.length) {
+            await adminStoreRequest(queueStoreName, 'readwrite', store => store.put({
+                ...operation,
+                payload: { ...operation.payload, student_ids: remainingStudentIds.map(Number) }
+            }));
+        } else {
+            await removeQueuedTeacherOperation(key);
+        }
         try { sessionStorage.removeItem(teacherSyncFailureStorageKey); } catch {}
         window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
         return true;
@@ -2112,26 +2197,35 @@
                 if (!navigator.onLine) break;
                 failedOperation = operation;
                 let payload = { ...operation.payload, type: operation.type };
-                if (operation.file) {
-                    const safeName = String(operation.file.name || 'attachment').replace(/[^A-Za-z0-9._-]/g, '_');
-                    const path = `teacher-offline/${operation.operationId}/${safeName}`;
-                    const { error: uploadError } = await client.storage
-                        .from('instruction-files')
-                        .upload(path, operation.file, { cacheControl: '3600', upsert: false });
-                    if (uploadError) {
-                        const message = String(uploadError.message || '').toLowerCase();
-                        const alreadyUploaded = message.includes('already exists') || message.includes('duplicate');
-                        if (!alreadyUploaded) throw uploadError;
+                if (operation.type === 'requirement_clear') {
+                    const { error } = await client.rpc('sync_teacher_requirement_clear', {
+                        p_operation_id: operation.operationId,
+                        p_student_id: payload.student_id,
+                        p_subject_id: payload.subject_id
+                    });
+                    if (error) throw error;
+                } else {
+                    if (operation.file) {
+                        const safeName = String(operation.file.name || 'attachment').replace(/[^A-Za-z0-9._-]/g, '_');
+                        const path = `teacher-offline/${operation.operationId}/${safeName}`;
+                        const { error: uploadError } = await client.storage
+                            .from('instruction-files')
+                            .upload(path, operation.file, { cacheControl: '3600', upsert: false });
+                        if (uploadError) {
+                            const message = String(uploadError.message || '').toLowerCase();
+                            const alreadyUploaded = message.includes('already exists') || message.includes('duplicate');
+                            if (!alreadyUploaded) throw uploadError;
+                        }
+                        const { data: publicUrl } = client.storage.from('instruction-files').getPublicUrl(path);
+                        payload = { ...payload, file_path: path, file_url: publicUrl?.publicUrl || null, file_name: operation.file.name };
                     }
-                    const { data: publicUrl } = client.storage.from('instruction-files').getPublicUrl(path);
-                    payload = { ...payload, file_path: path, file_url: publicUrl?.publicUrl || null, file_name: operation.file.name };
-                }
 
-                const { error } = await client.rpc('sync_teacher_offline_operation', {
-                    p_operation_id: operation.operationId,
-                    p_payload: payload
-                });
-                if (error) throw error;
+                    const { error } = await client.rpc('sync_teacher_offline_operation', {
+                        p_operation_id: operation.operationId,
+                        p_payload: payload
+                    });
+                    if (error) throw error;
+                }
                 await removeQueuedTeacherOperation(operation.key);
                 window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
                 failedOperation = null;
@@ -2165,7 +2259,11 @@
                 && (!Number.isInteger(Number(failedPayload.subject_id)) || Number(failedPayload.subject_id) <= 0
                     || !Number.isInteger(Number(failedPayload.section_id)) || Number(failedPayload.section_id) <= 0);
             const assignmentError = String(error?.message || '').includes('You are not assigned to this active subject and section.');
-            const changeLabel = failedType === 'grade' ? 'grade' : failedType === 'attachment' ? 'file' : failedType === 'requirement_delete' ? 'requirement deletion' : failedType === 'requirement' ? 'requirement' : 'change';
+            const changeLabel = failedType === 'grade' ? 'grade'
+                : failedType === 'attachment' ? 'file'
+                    : failedType === 'requirement_delete' ? 'requirement deletion'
+                        : failedType === 'requirement_clear' ? 'requirement clear'
+                            : failedType === 'requirement' ? 'requirement' : 'change';
             const operationTag = failedOperation?.operationId ? ` (${failedOperation.operationId.slice(0, 8)})` : '';
             const syncMessage = navigator.onLine
                 ? invalidGrade
@@ -2800,12 +2898,10 @@
                     });
                 });
             }
-            if ((operation.type === 'requirement' || operation.type === 'attachment') && pageKey === 'subjects') {
+            if (operation.type === 'attachment' && pageKey === 'subjects') {
                 const currentSubject = container.querySelector('#subjectSelect')?.value;
                 if (String(currentSubject) !== String(payload.subject_id)) continue;
-                const studentIds = operation.type === 'requirement'
-                    ? (payload.student_ids || [])
-                    : (payload.student_ids || []);
+                const studentIds = payload.student_ids || [];
                 studentIds.forEach(studentId => {
                     const row = container.querySelector(`tr[data-student-id="${studentId}"]`)
                         || Array.from(container.querySelectorAll('#studentsTable tr')).find(candidate => {
@@ -2817,9 +2913,7 @@
                     const pending = document.createElement('div');
                     pending.className = 'offline-queued-requirement';
                     pending.dataset.operationId = operation.operationId;
-                    pending.textContent = operation.type === 'requirement'
-                        ? `Waiting to sync: ${payload.requirement_title}`
-                        : `Attachment waiting to sync: ${operation.file?.name || payload.file_name || 'File'}`;
+                    pending.textContent = `Attachment waiting to sync: ${operation.file?.name || payload.file_name || 'File'}`;
                     pending.style.cssText = 'margin:6px 0;padding:7px 9px;border-left:3px solid #d97706;background:#fffbeb;color:#92400e;font-size:12px;';
                     cell.appendChild(pending);
                 });
@@ -2829,6 +2923,9 @@
                 if (String(currentSubject) !== String(payload.subject_id)) continue;
                 container.querySelectorAll(`[data-requirement-id="${payload.requirement_id}"]`).forEach(element => element.remove());
             }
+        }
+        if (pageKey === 'subjects' && typeof window.renderQueuedTeacherRequirements === 'function') {
+            await window.renderQueuedTeacherRequirements();
         }
     }
 
@@ -2843,7 +2940,7 @@
             const studentPicker = window.currentOfflineRole === 'teacher'
                 && control.matches('.requirement-student-check');
             const safeTeacherAction = window.currentOfflineRole === 'teacher' && control.matches('button')
-                && /openRequirementModal|saveRequirement|deleteRequirement|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor|closeModal/.test(control.getAttribute('onclick') || '');
+                && /openRequirementModal|saveRequirement|clearStudentRequirements|editQueuedRequirement|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor|closeModal/.test(control.getAttribute('onclick') || '');
             control.disabled = !(teacherFilter || teacherGradeField || requirementInput || studentPicker || safeTeacherAction);
         });
         if (window.currentOfflineRole === 'teacher') {
@@ -2858,7 +2955,7 @@
                     const isLogout = attribute.name.toLowerCase() === 'onclick' && element.matches('a[href="login.html"]');
                     const isOfflineSupportedAction = window.currentOfflineRole === 'teacher'
                         && attribute.name.toLowerCase() === 'onclick'
-                        && /openRequirementModal|saveRequirement|deleteRequirement|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor/.test(handler);
+                        && /openRequirementModal|saveRequirement|clearStudentRequirements|editQueuedRequirement|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor/.test(handler);
                     const isOfflineAdminRequestRemoval = window.currentOfflineRole === 'admin'
                         && attribute.name.toLowerCase() === 'onclick'
                         && /^(removeQueuedAdminAccount|removeFailedAdminAccountRequest)\(/.test(handler);
@@ -2911,6 +3008,8 @@
     window.preloadTeacherAssignedRosters = preloadTeacherAssignedRosters;
     window.getTeacherOfflineQueue = getTeacherQueue;
     window.discardTeacherOfflineOperation = discardTeacherOfflineOperation;
+    window.updateQueuedTeacherRequirement = updateQueuedTeacherRequirement;
+    window.discardQueuedTeacherRequirement = discardQueuedTeacherRequirement;
     window.syncTeacherOfflineQueue = syncTeacherQueue;
     window.clearStudentOfflineSnapshots = clearStudentOfflineSnapshots;
 
