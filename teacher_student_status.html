@@ -212,6 +212,17 @@ table td{
     min-width:150px;
 }
 
+.grade-queue-status{
+    display:block;
+    margin-top:6px;
+    color:#92400e;
+    font-size:12px;
+}
+
+.grade-queue-status[hidden]{
+    display:none;
+}
+
 .section-passing-grade{
     display:flex;
     align-items:flex-end;
@@ -896,7 +907,7 @@ id="confirmModal">
 
 </div>
 
-<script src="portal-offline.js?v=195"></script>
+<script src="portal-offline.js?v=196"></script>
 <script>
 
 /* ================= ALERT FUNCTION ================= */
@@ -1096,6 +1107,15 @@ window.applyQueuedGradeToBaseline = payload => {
         }
     });
     gradeBaselineByStudent.set(studentId, baseline);
+};
+window.setGradeQueueState = (studentId, message) => {
+    const button = document.getElementById(`save-grade-${studentId}`);
+    const status = document.getElementById(`grade-queue-status-${studentId}`);
+    if (button) button.textContent = 'Save';
+    if (status) {
+        status.textContent = message || '';
+        status.hidden = !message;
+    }
 };
 
 function formatStudentTableName(student) {
@@ -1789,6 +1809,7 @@ onclick="saveGrade(${student.student_id})">
 <i class="fa-solid fa-floppy-disk"></i>
  Save
 </button>
+       <span id="grade-queue-status-${student.student_id}" class="grade-queue-status" role="status" hidden></span>
 
         </td>
 
@@ -1878,7 +1899,7 @@ studentId
 
     if (!navigator.onLine) {
         try {
-            await queueTeacherOperation(supabaseClient, 'grade', {
+            await window.queueTeacherGradeOperation(supabaseClient, {
                 student_id: Number(studentId),
                 subject_id: Number(subjectId),
                 section_id: Number(currentSectionFilter.value),
@@ -1891,8 +1912,7 @@ studentId
                 ...changedFields,
                 status
             });
-            const saveButton = document.querySelector(`[onclick*="saveGrade(${studentId})"]`);
-            if (saveButton) saveButton.textContent = 'Queued offline';
+            window.setGradeQueueState(studentId, 'Waiting to sync (editable)');
             return;
         } catch (error) {
             showAlert('error', 'Offline Save Failed', error.message || 'Unable to save this grade on the device.');

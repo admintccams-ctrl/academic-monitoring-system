@@ -556,8 +556,8 @@
                 ? 'Attachment'
                 : type === 'requirement_delete'
                     ? 'Delete'
-                        : type === 'requirement_clear'
-                            ? 'Clear requirements'
+                    : type === 'requirement_clear'
+                        ? 'Clear requirements'
                     : 'Requirement';
         const pendingCount = pending.length + 1;
         setNotice(`${changeLabel} saved on this device. ${pendingCount} change${pendingCount === 1 ? '' : 's'} waiting to sync.`, true, 'sync');
@@ -566,6 +566,39 @@
             await applyQueuedTeacherOperations(client, window.currentStudentOfflinePage, document.querySelector('.main'));
         }
         return operationId;
+    }
+
+    async function queueTeacherGradeOperation(client, payload) {
+        if (syncInProgress) return queueTeacherOperation(client, 'grade', payload);
+        const pending = await getTeacherQueue(client);
+        const matchesGrade = operation => operation.type === 'grade'
+            && String(operation.payload?.student_id) === String(payload.student_id)
+            && String(operation.payload?.subject_id) === String(payload.subject_id)
+            && String(operation.payload?.section_id) === String(payload.section_id);
+        const existing = [...pending].reverse().find(matchesGrade);
+        if (!existing || syncInProgress) return queueTeacherOperation(client, 'grade', payload);
+
+        const mergedPayload = {
+            ...existing.payload,
+            ...payload,
+            changed_terms: Array.from(new Set([
+                ...(existing.payload?.changed_terms || []),
+                ...(payload.changed_terms || [])
+            ]))
+        };
+        const updatedOperation = {
+            ...existing,
+            payload: mergedPayload
+        };
+        delete updatedOperation.lastError;
+        await adminStoreRequest(queueStoreName, 'readwrite', store => store.put(updatedOperation));
+        try { sessionStorage.removeItem(teacherSyncFailureStorageKey); } catch {}
+        setNotice(`Grade updated on this device. ${pending.length} change${pending.length === 1 ? '' : 's'} waiting to sync.`, true, 'sync');
+        window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
+        if (window.currentOfflineRole === 'teacher' && window.currentStudentOfflinePage) {
+            await applyQueuedTeacherOperations(client, window.currentStudentOfflinePage, document.querySelector('.main'));
+        }
+        return existing.operationId;
     }
 
     async function getTeacherQueue(client) {
@@ -592,55 +625,6 @@
         if (!operation || operation.userId !== userId) throw new Error('This saved teacher change was not found.');
         await removeQueuedTeacherOperation(key);
         try { sessionStorage.removeItem(teacherSyncFailureStorageKey); } catch {}
-        window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
-        return true;
-    }
-
-    async function updateQueuedTeacherRequirement(client, operationId, studentId, payload, file = null) {
-        if (syncInProgress) throw new Error('This requirement is syncing. Wait for sync to finish before editing it.');
-        const userId = await getUserId(client);
-        const key = `${userId}:${operationId}`;
-        const operation = await adminStoreRequest(queueStoreName, 'readonly', store => store.get(key));
-        if (!operation || operation.userId !== userId || operation.type !== 'requirement') {
-            throw new Error('This saved requirement is no longer waiting to sync.');
-        }
-
-        const selectedStudentId = String(studentId);
-        const studentIds = (operation.payload?.student_ids || []).map(String);
-        if (!studentIds.includes(selectedStudentId)) {
-            throw new Error('This saved requirement no longer includes the selected student.');
-        }
-
-        const updatedOperation = {
-            ...operation,
-            payload: {
-                ...operation.payload,
-                ...payload,
-                student_ids: [Number(selectedStudentId)]
-            },
-            file: file || operation.file || null
-        };
-        const remainingStudentIds = studentIds.filter(id => id !== selectedStudentId);
-        const remainderOperationId = remainingStudentIds.length ? createOperationId() : null;
-        const remainderOperation = remainderOperationId
-            ? {
-                ...operation,
-                key: `${userId}:${remainderOperationId}`,
-                operationId: remainderOperationId,
-                payload: { ...operation.payload, student_ids: remainingStudentIds.map(Number) }
-            }
-            : null;
-
-        const database = await openDatabase();
-        await new Promise((resolve, reject) => {
-            const transaction = database.transaction(queueStoreName, 'readwrite');
-            const store = transaction.objectStore(queueStoreName);
-            store.put(updatedOperation);
-            if (remainderOperation) store.put(remainderOperation);
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error || new Error('Unable to update the saved requirement.'));
-            transaction.onabort = () => reject(transaction.error || new Error('Updating the saved requirement was interrupted.'));
-        });
         window.dispatchEvent(new CustomEvent('teacher-offline-queue-changed'));
         return true;
     }
@@ -2863,8 +2847,12 @@
                 if (typeof window.applyQueuedGradeToBaseline === 'function') {
                     window.applyQueuedGradeToBaseline(payload);
                 }
-                const saveButton = container.querySelector(`#save-grade-${payload.student_id}`);
-                if (saveButton) saveButton.textContent = 'Queued offline';
+                if (typeof window.setGradeQueueState === 'function') {
+                    window.setGradeQueueState(payload.student_id, 'Waiting to sync (editable)');
+                } else {
+                    const saveButton = container.querySelector(`#save-grade-${payload.student_id}`);
+                    if (saveButton) saveButton.textContent = 'Save';
+                }
             }
             if (operation.type === 'grade' && pageKey === 'students') {
                 const gradeTerms = [
@@ -2940,7 +2928,7 @@
             const studentPicker = window.currentOfflineRole === 'teacher'
                 && control.matches('.requirement-student-check');
             const safeTeacherAction = window.currentOfflineRole === 'teacher' && control.matches('button')
-                && /openRequirementModal|saveRequirement|clearStudentRequirements|editQueuedRequirement|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor|closeModal/.test(control.getAttribute('onclick') || '');
+                && /openRequirementModal|saveRequirement|clearStudentRequirements|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor|closeModal/.test(control.getAttribute('onclick') || '');
             control.disabled = !(teacherFilter || teacherGradeField || requirementInput || studentPicker || safeTeacherAction);
         });
         if (window.currentOfflineRole === 'teacher') {
@@ -2955,7 +2943,7 @@
                     const isLogout = attribute.name.toLowerCase() === 'onclick' && element.matches('a[href="login.html"]');
                     const isOfflineSupportedAction = window.currentOfflineRole === 'teacher'
                         && attribute.name.toLowerCase() === 'onclick'
-                        && /openRequirementModal|saveRequirement|clearStudentRequirements|editQueuedRequirement|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor/.test(handler);
+                        && /openRequirementModal|saveRequirement|clearStudentRequirements|discardQueuedRequirement|cancelQueuedRequirementClear|closeRequirementModal|selectRequirementStudents|updateRequirementStudentCount|openUploadModal|closeUploadModal|uploadInstruction|saveGrade|updateStatusColor/.test(handler);
                     const isOfflineAdminRequestRemoval = window.currentOfflineRole === 'admin'
                         && attribute.name.toLowerCase() === 'onclick'
                         && /^(removeQueuedAdminAccount|removeFailedAdminAccountRequest)\(/.test(handler);
@@ -3004,11 +2992,11 @@
     window.restoreStudentOfflineSnapshot = restoreStudentOfflineSnapshot;
     window.restoreTeacherOfflineSnapshot = restoreTeacherOfflineSnapshot;
     window.queueTeacherOperation = queueTeacherOperation;
+    window.queueTeacherGradeOperation = queueTeacherGradeOperation;
     window.syncTeacherQueue = syncTeacherQueue;
     window.preloadTeacherAssignedRosters = preloadTeacherAssignedRosters;
     window.getTeacherOfflineQueue = getTeacherQueue;
     window.discardTeacherOfflineOperation = discardTeacherOfflineOperation;
-    window.updateQueuedTeacherRequirement = updateQueuedTeacherRequirement;
     window.discardQueuedTeacherRequirement = discardQueuedTeacherRequirement;
     window.syncTeacherOfflineQueue = syncTeacherQueue;
     window.clearStudentOfflineSnapshots = clearStudentOfflineSnapshots;
