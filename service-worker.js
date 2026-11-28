@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ams-student-shell-v180';
+const CACHE_NAME = 'ams-student-shell-v181';
 const APP_FILES = [
     './student_dashboard.html',
     './student_subjects.html',
@@ -22,6 +22,7 @@ const APP_FILES = [
     './portal-offline.js?v=194',
     './portal-offline.js?v=195',
     './portal-offline.js?v=196',
+    './portal-offline.js?v=197',
     './mobile_fix.css',
     './school_logo.png'
 ];

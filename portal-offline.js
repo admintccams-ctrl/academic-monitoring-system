@@ -2305,10 +2305,9 @@
         const main = document.querySelector('.main');
         if (!userId || !main || !main.innerHTML.trim()) return false;
 
-        const alertBox = document.getElementById('amsAlert');
-        if (alertBox) alertBox.classList.remove('show');
-        const confirmModal = document.getElementById('confirmModal');
-        if (confirmModal) confirmModal.classList.remove('show');
+        const snapshotMain = main.cloneNode(true);
+        snapshotMain.querySelectorAll('.modal,.modal-overlay,.confirm-modal-overlay,.ams-alert')
+            .forEach(element => element.classList.remove('show'));
 
         await removeOtherUsers(userId);
         const formState = Array.from(main.querySelectorAll('input[id],select[id],textarea[id]')).map(element => ({
@@ -2322,7 +2321,7 @@
             : null;
         await writeSnapshot({
             key: snapshotKey(userId, pageKey, role, savedFilterState),
-            html: main.innerHTML,
+            html: snapshotMain.innerHTML,
             formState,
             filterState: savedFilterState,
             pageState,
